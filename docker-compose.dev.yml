@@ -1,0 +1,80 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: serve_os_db_dev
+    restart: unless-stopped
+    env_file:
+      - .env.development
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - serve_os_network_dev
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: serve_os_app_dev
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PORT}:${PORT}"
+    env_file:
+      - .env.development
+    volumes:
+      - .:/app
+      - node_modules_dev:/app/node_modules
+    command: npm run start:dev
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - serve_os_network_dev
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: serve_os_migrate_dev
+    env_file:
+      - .env.development
+    command: npm run migration:dev:run
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - serve_os_network_dev
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: serve_os_pgadmin_dev
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@local.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    ports:
+      - "127.0.0.1:5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - serve_os_network_dev
+    volumes:
+      - pgadmin_data_dev:/var/lib/pgadmin
+
+volumes:
+  postgres_data_dev:
+  pgadmin_data_dev:
+  node_modules_dev:
+
+networks:
+  serve_os_network_dev:
+    driver: bridge

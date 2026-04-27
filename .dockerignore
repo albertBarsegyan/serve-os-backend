@@ -1,0 +1,12 @@
+node_modules
+dist
+npm-debug.log
+.git
+.dockerignore
+Dockerfile
+docker-compose*
+.env
+README.md
+API_DOCUMENTATION.md
+test
+coverage
