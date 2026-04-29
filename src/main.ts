@@ -36,7 +36,6 @@ async function bootstrap() {
     }),
   );
 
-  // Global interceptor for class-transformer
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
 
   // CORS

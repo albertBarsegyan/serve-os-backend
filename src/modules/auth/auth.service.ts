@@ -58,7 +58,7 @@ export class AuthService {
     };
 
     const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(JSON.stringify(accessPayload), {
+      this.jwtService.signAsync(accessPayload, {
         secret: this.configService.get<string>('JWT_SECRET'),
       }),
 
@@ -152,6 +152,27 @@ export class AuthService {
         businessId: staff?.businessId,
         role: staff?.role,
       },
+    };
+  }
+
+  async getMe(userId: string): Promise<AuthUser> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('Access denied');
+    }
+
+    const staff = await this.staffRepository.findOne({
+      where: { userId: user.id },
+    });
+
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      businessId: staff?.businessId,
+      role: staff?.role,
     };
   }
 

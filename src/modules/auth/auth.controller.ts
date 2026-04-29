@@ -105,7 +105,7 @@ export class AuthController {
   logout(@Res({ passthrough: true }) res: Response) {
     res.clearCookie('access_token');
     res.clearCookie('refresh_token', { path: '/api/auth/refresh' });
-    return { message: 'Logged out' };
+    return { message: 'ok' };
   }
 
   @Get('me')
@@ -122,6 +122,6 @@ export class AuthController {
       };
     },
   ) {
-    return req.user;
+    return this.authService.getMe(req.user.sub);
   }
 }

@@ -35,12 +35,12 @@ export class TenantGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const user = request.user;
 
-    if (!user || !user.businessId) {
+    if (!user) {
       this.logger.warn(
         {
+          user,
           path: request.url,
           method: request.method,
-          userId: user?.sub,
         },
         'Tenant guard blocked request without business context',
       );
