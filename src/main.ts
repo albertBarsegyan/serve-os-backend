@@ -18,9 +18,7 @@ async function bootstrap() {
   // Swagger Configuration
   const config = new DocumentBuilder()
     .setTitle('Serve-OS API')
-    .setDescription(
-      'Multi-tenant SaaS backend for restaurant management platform',
-    )
+    .setDescription('Multi-tenant SaaS backend for restaurant management platform')
     .setVersion('1.0')
     .addBearerAuth()
     .build();

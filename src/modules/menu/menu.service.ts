@@ -1,29 +1,26 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Category } from './entities/category.entity';
+import { MenuCategory } from './entities/category.entity';
 import { Product } from './entities/product.entity';
 import { CreateCategoryDto, CreateProductDto } from './dto/menu.dto';
 
 @Injectable()
 export class MenuService {
   constructor(
-    @InjectRepository(Category)
-    private categoryRepository: Repository<Category>,
+    @InjectRepository(MenuCategory)
+    private categoryRepository: Repository<MenuCategory>,
     @InjectRepository(Product)
     private productRepository: Repository<Product>,
   ) {}
 
   // Category CRUD
-  async createCategory(
-    businessId: string,
-    dto: CreateCategoryDto,
-  ): Promise<Category> {
+  async createCategory(businessId: string, dto: CreateCategoryDto): Promise<MenuCategory> {
     const category = this.categoryRepository.create({ ...dto, businessId });
     return this.categoryRepository.save(category);
   }
 
-  async findAllCategories(businessId: string): Promise<Category[]> {
+  async findAllCategories(businessId: string): Promise<MenuCategory[]> {
     return this.categoryRepository.find({
       where: { businessId },
       order: { sortOrder: 'ASC' },
@@ -31,7 +28,7 @@ export class MenuService {
     });
   }
 
-  async findCategory(businessId: string, id: string): Promise<Category> {
+  async findCategory(businessId: string, id: string): Promise<MenuCategory> {
     const category = await this.categoryRepository.findOne({
       where: { id, businessId },
     });
@@ -42,10 +39,7 @@ export class MenuService {
   }
 
   // Product CRUD
-  async createProduct(
-    businessId: string,
-    dto: CreateProductDto,
-  ): Promise<Product> {
+  async createProduct(businessId: string, dto: CreateProductDto): Promise<Product> {
     const category = await this.findCategory(businessId, dto.categoryId);
     const product = this.productRepository.create({ ...dto, businessId });
     return this.productRepository.save(product);

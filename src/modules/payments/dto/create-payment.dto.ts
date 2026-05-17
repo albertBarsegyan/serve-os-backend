@@ -1,12 +1,6 @@
-import {
-  IsNotEmpty,
-  IsUUID,
-  IsEnum,
-  IsNumber,
-  IsOptional,
-} from 'class-validator';
+import { IsNotEmpty, IsUUID, IsEnum, IsNumber } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { PaymentMethod } from '@modules/orders/entities/order.entity';
+import { PaymentMethod } from '@common/enums/payment.enum';
 
 export class CreatePaymentDto {
   @ApiProperty({ example: 'uuid-v4-order-id' })

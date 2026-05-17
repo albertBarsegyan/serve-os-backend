@@ -10,7 +10,8 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
-import { OrderStatus, PaymentMethod } from '../entities/order.entity';
+import { OrderStatus } from '../entities/order.entity';
+import { PaymentMethod } from '@common/enums/payment.enum';
 
 export class CreateOrderItemDto {
   @ApiProperty({ example: 'uuid-v4-product-id' })

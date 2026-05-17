@@ -16,6 +16,7 @@ import { PaymentsModule } from '@modules/payments/payments.module';
 
 import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
 import { TenantGuard } from '@common/guards/tenant.guard';
+import { RolesGuard } from '@common/guards/roles.guard';
 import { TenantInterceptor } from '@common/interceptors/tenant.interceptor';
 import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
 
@@ -28,15 +29,9 @@ import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const environment = configService.get<string>(
-          'NODE_ENV',
-          'development',
-        );
+        const environment = configService.get<string>('NODE_ENV', 'development');
         const isProduction = environment === 'production';
-        const logLevel = configService.get<string>(
-          'LOG_LEVEL',
-          isProduction ? 'info' : 'debug',
-        );
+        const logLevel = configService.get<string>('LOG_LEVEL', isProduction ? 'info' : 'debug');
 
         return {
           pinoHttp: {
@@ -72,9 +67,7 @@ import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
                   },
                 },
             customProps: (req) => {
-              const user = (
-                req as { user?: { sub?: string; businessId?: string } }
-              ).user;
+              const user = (req as { user?: { sub?: string; businessId?: string } }).user;
               return {
                 context: 'HTTP',
                 userId: user?.sub,
@@ -119,6 +112,10 @@ import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
     {
       provide: APP_GUARD,
       useClass: TenantGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
     },
     {
       provide: APP_INTERCEPTOR,

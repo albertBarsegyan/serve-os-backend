@@ -4,15 +4,25 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+  Index,
 } from 'typeorm';
-
-export enum BusinessType {
-  RESTAURANT = 'RESTAURANT',
-  CAFE = 'CAFE',
-  BAR = 'BAR',
-}
+import { User } from '@modules/users/entities/user.entity';
+import { BusinessType } from '@common/enums/business-type.enum';
+import { BusinessFeature } from '@common/enums/business-feature.enum';
+import { Staff } from '@modules/staff/entities/staff.entity';
+import { Table } from '@modules/tables/entities/table.entity';
+import { MenuCategory } from '@modules/menu/entities/category.entity';
+import { Product } from '@modules/menu/entities/product.entity';
+import { Order } from '@modules/orders/entities/order.entity';
+import { Payment } from '@modules/payments/entities/payment.entity';
+import { KitchenStation } from '@modules/kitchen/entities/kitchen-station.entity';
+import { BusinessPaymentMethod } from '@modules/business/entities/business-payment-method.entity';
 
 @Entity('businesses')
+@Index('IDX_business_slug', ['slug'])
 export class Business {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -20,12 +30,26 @@ export class Business {
   @Column()
   name: string;
 
+  @Column({ unique: true })
+  slug: string;
+
   @Column({
     type: 'enum',
     enum: BusinessType,
+    enumName: 'business_type_enum',
     default: BusinessType.RESTAURANT,
   })
   type: BusinessType;
+
+  @Column({
+    type: 'enum',
+    enum: BusinessFeature,
+    enumName: 'businesses_features_enum',
+    array: true,
+    nullable: false,
+    default: [],
+  })
+  features: BusinessFeature[];
 
   @Column()
   location: string;
@@ -44,4 +68,35 @@ export class Business {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @Column()
+  ownerId: string;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'ownerId' })
+  owner: User;
+
+  @OneToMany(() => Staff, (s) => s.business)
+  staff: Staff[];
+
+  @OneToMany(() => Table, (t) => t.business)
+  tables: Table[];
+
+  @OneToMany(() => KitchenStation, (k) => k.business)
+  kitchenStations: KitchenStation[];
+
+  @OneToMany(() => MenuCategory, (c) => c.business)
+  menuCategories: MenuCategory[];
+
+  @OneToMany(() => Product, (p) => p.business)
+  products: Product[];
+
+  @OneToMany(() => Order, (o) => o.business)
+  orders: Order[];
+
+  @OneToMany(() => Payment, (p) => p.business)
+  payments: Payment[];
+
+  @OneToMany(() => BusinessPaymentMethod, (pm) => pm.business)
+  paymentMethods: BusinessPaymentMethod[];
 }

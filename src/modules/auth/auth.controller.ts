@@ -28,13 +28,8 @@ export class AuthController {
     private readonly configService: ConfigService,
   ) {}
 
-  private setTokenCookies(
-    res: Response,
-    accessToken: string,
-    refreshToken: string,
-  ) {
-    const isProduction =
-      this.configService.get<string>('NODE_ENV') === 'production';
+  private setTokenCookies(res: Response, accessToken: string, refreshToken: string) {
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
 
     res.cookie('access_token', accessToken, {
       httpOnly: true,
@@ -58,10 +53,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Register a new user' })
   @ApiResponse({ status: 201, description: 'User successfully registered' })
   @ApiResponse({ status: 409, description: 'User already exists' })
-  async register(
-    @Body() registerDto: RegisterDto,
-    @Res({ passthrough: true }) res: Response,
-  ) {
+  async register(@Body() registerDto: RegisterDto, @Res({ passthrough: true }) res: Response) {
     const { tokens, user } = await this.authService.register(registerDto);
     this.setTokenCookies(res, tokens.accessToken, tokens.refreshToken);
     return { user };
@@ -73,13 +65,16 @@ export class AuthController {
   @ApiOperation({ summary: 'Login user' })
   @ApiResponse({ status: 200, description: 'User successfully logged in' })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
-  async login(
-    @Body() loginDto: LoginDto,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const { tokens, user } = await this.authService.login(loginDto);
-    this.setTokenCookies(res, tokens.accessToken, tokens.refreshToken);
-    return { user };
+  async login(@Body() loginDto: LoginDto, @Res({ passthrough: true }) res: Response) {
+    try {
+      const { tokens, user } = await this.authService.login(loginDto);
+      this.setTokenCookies(res, tokens.accessToken, tokens.refreshToken);
+      return { user };
+    } catch (e) {
+      res.clearCookie('access_token');
+      res.clearCookie('refresh_token', { path: '/api/auth/refresh' });
+      throw e;
+    }
   }
 
   @Public()

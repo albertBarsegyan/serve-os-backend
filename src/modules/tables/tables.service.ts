@@ -43,11 +43,7 @@ export class TablesService {
     return table;
   }
 
-  async update(
-    businessId: string,
-    id: string,
-    dto: Partial<CreateTableDto>,
-  ): Promise<Table> {
+  async update(businessId: string, id: string, dto: Partial<CreateTableDto>): Promise<Table> {
     const table = await this.findOne(businessId, id);
     await this.tableRepository.update(id, dto);
     return this.findOne(businessId, id);

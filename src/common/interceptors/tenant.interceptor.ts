@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  NestInterceptor,
-  ExecutionContext,
-  CallHandler,
-} from '@nestjs/common';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
 import { Request } from 'express';
 import { Observable } from 'rxjs';
 import { PinoLogger } from 'nestjs-pino';
@@ -24,9 +19,9 @@ export class TenantInterceptor implements NestInterceptor {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const user = request.user;
 
-    if (user && user.businessId) {
+    if (user?.businessId) {
       if (request.body && typeof request.body === 'object') {
-        request.body.businessId = user.businessId;
+        (request.body as { businessId: string }).businessId = user.businessId;
         this.logger.debug(
           {
             path: request.url,

@@ -1,16 +1,9 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
-import { Payment, PaymentStatus } from './entities/payment.entity';
-import {
-  Order,
-  PaymentMethod,
-  PaymentStatus as OrderPaymentStatus,
-} from '@modules/orders/entities/order.entity';
+import { Payment } from './entities/payment.entity';
+import { Order } from '@modules/orders/entities/order.entity';
+import { PaymentMethod, PaymentStatus, OrderPaymentStatus } from '@common/enums/payment.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 
 @Injectable()
@@ -55,10 +48,7 @@ export class PaymentsService {
     }, 2000);
   }
 
-  async confirmPayment(
-    paymentId: string,
-    staffId: string | null,
-  ): Promise<Payment> {
+  async confirmPayment(paymentId: string, staffId: string | null): Promise<Payment> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();

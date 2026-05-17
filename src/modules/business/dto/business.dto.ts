@@ -1,12 +1,7 @@
-import {
-  IsNotEmpty,
-  IsString,
-  IsEnum,
-  IsOptional,
-  IsBoolean,
-} from 'class-validator';
+import { IsNotEmpty, IsString, IsEnum, IsOptional, IsBoolean, IsArray } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { BusinessType } from '../entities/business.entity';
+import { BusinessType } from '@common/enums/business-type.enum';
+import { BusinessFeature } from '@common/enums/business-feature.enum';
 
 export class CreateBusinessDto {
   @ApiProperty({ example: 'My Restaurant' })
@@ -32,6 +27,18 @@ export class CreateBusinessDto {
   @ApiProperty({ example: { monday: '09:00-22:00' }, required: false })
   @IsOptional()
   workingHours?: any;
+
+  @ApiProperty({
+    enum: BusinessFeature,
+    isArray: true,
+    required: false,
+    description:
+      'Optional: Specific features to enable. If not provided, defaults from business type preset will be used.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsEnum(BusinessFeature, { each: true })
+  features?: BusinessFeature[];
 }
 
 export class UpdateBusinessDto {
@@ -63,4 +70,15 @@ export class UpdateBusinessDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiProperty({
+    enum: BusinessFeature,
+    isArray: true,
+    required: false,
+    description: 'Optional: Update enabled features for the business.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsEnum(BusinessFeature, { each: true })
+  features?: BusinessFeature[];
 }

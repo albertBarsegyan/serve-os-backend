@@ -4,9 +4,14 @@ import {
   Column,
   ManyToOne,
   JoinColumn,
+  OneToMany,
+  ManyToMany,
+  JoinTable,
 } from 'typeorm';
 import { Business } from '@modules/business/entities/business.entity';
-import { Category } from './category.entity';
+import { MenuCategory } from './category.entity';
+import { OrderItem } from '@modules/orders/entities/order-item.entity';
+import { ModifierGroup } from '@modules/modifiers/entities/modifier-group.entity';
 
 @Entity('products')
 export class Product {
@@ -23,9 +28,9 @@ export class Product {
   @Column()
   categoryId: string;
 
-  @ManyToOne(() => Category, (category) => category.products)
+  @ManyToOne(() => MenuCategory, (category) => category.products)
   @JoinColumn({ name: 'categoryId' })
-  category: Category;
+  category: MenuCategory;
 
   @Column()
   name: string;
@@ -41,4 +46,18 @@ export class Product {
 
   @Column({ default: true })
   isAvailable: boolean;
+
+  @Column({ type: 'simple-array', nullable: true })
+  allergens: string[];
+
+  @OneToMany(() => OrderItem, (i) => i.product)
+  orderItems: OrderItem[];
+
+  @ManyToMany(() => ModifierGroup, (g) => g.products)
+  @JoinTable({
+    name: 'product_modifier_groups',
+    joinColumn: { name: 'productId', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'modifierGroupId', referencedColumnName: 'id' },
+  })
+  modifierGroups: ModifierGroup[];
 }

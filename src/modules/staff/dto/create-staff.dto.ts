@@ -1,6 +1,6 @@
 import { IsNotEmpty, IsUUID, IsEnum } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { StaffRole } from '../entities/staff.entity';
+import { StaffRole } from '@common/enums/staff-role.enum';
 
 export class CreateStaffDto {
   @ApiProperty({ example: 'uuid-v4-user-id' })

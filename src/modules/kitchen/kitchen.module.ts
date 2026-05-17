@@ -1,11 +1,13 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { KitchenGateway } from './kitchen.gateway';
 import { KitchenService } from './kitchen.service';
 import { KitchenController } from './kitchen.controller';
-import { OrdersModule } from '@modules/orders/orders.module';
+import { Order } from '@modules/orders/entities/order.entity';
+import { Business } from '@modules/business/entities/business.entity';
 
 @Module({
-  imports: [forwardRef(() => OrdersModule)],
+  imports: [TypeOrmModule.forFeature([Order, Business])],
   providers: [KitchenGateway, KitchenService],
   controllers: [KitchenController],
   exports: [KitchenGateway],

@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  UnauthorizedException,
-  ConflictException,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -12,6 +8,7 @@ import { User } from '@modules/users/entities/user.entity';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 import * as bcrypt from 'bcrypt';
 import { Staff } from '@modules/staff/entities/staff.entity';
+import { Role } from '@common/enums/role.enum';
 
 export interface TokenPair {
   accessToken: string;
@@ -23,8 +20,8 @@ export interface AuthUser {
   email: string;
   firstName: string;
   lastName: string;
-  businessId?: string;
-  role?: string;
+  hasBusiness: boolean;
+  role: string;
 }
 
 @Injectable()
@@ -39,15 +36,18 @@ export class AuthService {
     private readonly logger: PinoLogger,
   ) {}
 
-  private async generateTokens(
-    user: User,
-    staff: Staff | null,
-  ): Promise<TokenPair> {
+  /**
+   * Generate JWT token pair for a user.
+   * If staff record exists, use staff role; otherwise use user's base role.
+   */
+  private async generateTokens(user: User, staff: Staff | null): Promise<TokenPair> {
+    const role = staff?.role ?? user.role;
+
     const accessPayload = {
       sub: user.id,
       email: user.email,
       businessId: staff?.businessId ?? null,
-      role: staff?.role ?? null,
+      role: role,
       expiresIn: this.configService.get<string>('JWT_ACCESS_EXPIRES_IN', '15m'),
     };
 
@@ -70,13 +70,12 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  async register(
-    registerDto: RegisterDto,
-  ): Promise<{ tokens: TokenPair; user: AuthUser }> {
-    this.logger.debug(
-      { email: registerDto.email },
-      'Register request received',
-    );
+  /**
+   * Register a new user with role hardcoded to OWNER.
+   * Role cannot be set from the request body.
+   */
+  async register(registerDto: RegisterDto): Promise<{ tokens: TokenPair; user: AuthUser }> {
+    this.logger.debug({ email: registerDto.email }, 'Register request received');
 
     const existingUser = await this.userRepository.findOne({
       where: { email: registerDto.email },
@@ -96,6 +95,7 @@ export class AuthService {
       password: hashedPassword,
       firstName: registerDto.firstName,
       lastName: registerDto.lastName,
+      role: Role.OWNER,
     });
 
     const savedUser = await this.userRepository.save(user);
@@ -110,13 +110,13 @@ export class AuthService {
         email: savedUser.email,
         firstName: savedUser.firstName,
         lastName: savedUser.lastName,
+        hasBusiness: false,
+        role: savedUser.role,
       },
     };
   }
 
-  async login(
-    loginDto: LoginDto,
-  ): Promise<{ tokens: TokenPair; user: AuthUser }> {
+  async login(loginDto: LoginDto): Promise<{ tokens: TokenPair; user: AuthUser }> {
     this.logger.debug({ email: loginDto.email }, 'Login request received');
 
     const user = await this.userRepository.findOne({
@@ -124,10 +124,7 @@ export class AuthService {
     });
 
     if (!user || !(await bcrypt.compare(loginDto.password, user.password))) {
-      this.logger.warn(
-        { email: loginDto.email },
-        'Login failed: invalid credentials',
-      );
+      this.logger.warn({ email: loginDto.email }, 'Login failed: invalid credentials');
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -138,7 +135,7 @@ export class AuthService {
     const tokens = await this.generateTokens(user, staff ?? null);
 
     this.logger.info(
-      { userId: user.id, businessId: staff?.businessId, role: staff?.role },
+      { userId: user.id, businessId: staff?.businessId, role: staff?.role ?? user.role },
       'User authenticated successfully',
     );
 
@@ -149,8 +146,8 @@ export class AuthService {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
-        businessId: staff?.businessId,
-        role: staff?.role,
+        hasBusiness: user.hasBusiness,
+        role: staff?.role ?? user.role,
       },
     };
   }
@@ -158,7 +155,7 @@ export class AuthService {
   async getMe(userId: string): Promise<AuthUser> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
 
-    if (!user || !user.isActive) {
+    if (!user?.isActive) {
       throw new UnauthorizedException('Access denied');
     }
 
@@ -171,17 +168,15 @@ export class AuthService {
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,
-      businessId: staff?.businessId,
-      role: staff?.role,
+      hasBusiness: user?.hasBusiness,
+      role: staff?.role ?? user.role,
     };
   }
 
-  async refreshTokens(
-    userId: string,
-  ): Promise<{ tokens: TokenPair; user: AuthUser }> {
+  async refreshTokens(userId: string): Promise<{ tokens: TokenPair; user: AuthUser }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
 
-    if (!user || !user.isActive) {
+    if (!user?.isActive) {
       throw new UnauthorizedException('Access denied');
     }
 
@@ -200,8 +195,8 @@ export class AuthService {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
-        businessId: staff?.businessId,
-        role: staff?.role,
+        hasBusiness: user?.hasBusiness,
+        role: staff?.role ?? user.role,
       },
     };
   }

@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Order, OrderStatus } from './entities/order.entity';
@@ -15,17 +11,18 @@ import { KitchenGateway } from '@modules/kitchen/kitchen.gateway';
 export class OrdersService {
   constructor(
     @InjectRepository(Order)
-    private orderRepository: Repository<Order>,
+    private readonly orderRepository: Repository<Order>,
     @InjectRepository(OrderItem)
-    private orderItemRepository: Repository<OrderItem>,
+    private readonly orderItemRepository: Repository<OrderItem>,
     @InjectRepository(Product)
-    private productRepository: Repository<Product>,
-    private dataSource: DataSource,
-    private kitchenGateway: KitchenGateway,
+    private readonly productRepository: Repository<Product>,
+    private readonly dataSource: DataSource,
+    private readonly kitchenGateway: KitchenGateway,
   ) {}
 
   async create(businessId: string, dto: CreateOrderDto): Promise<Order> {
     const queryRunner = this.dataSource.createQueryRunner();
+
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
@@ -34,42 +31,51 @@ export class OrdersService {
       const orderItems: OrderItem[] = [];
 
       for (const itemDto of dto.items) {
-        const product = await this.productRepository.findOne({
+        const product = await queryRunner.manager.findOne(Product, {
           where: { id: itemDto.productId, businessId },
         });
 
         if (!product) {
-          throw new NotFoundException(
-            `Product with ID ${itemDto.productId} not found`,
-          );
+          throw new NotFoundException(`Product with ID ${itemDto.productId} not found`);
         }
 
         const unitPrice = Number(product.price);
         totalAmount += unitPrice * itemDto.quantity;
 
-        const orderItem = this.orderItemRepository.create({
+        const orderItem = queryRunner.manager.create(OrderItem, {
           productId: product.id,
           quantity: itemDto.quantity,
-          unitPrice: unitPrice,
+          unitPrice,
           notes: itemDto.notes,
         });
+
         orderItems.push(orderItem);
       }
 
-      const order = this.orderRepository.create({
+      const order = queryRunner.manager.create(Order, {
         businessId,
         tableId: dto.tableId,
-        staffId: dto.staffId,
+        waiterId: dto.staffId, // FIXED mapping
         totalAmount,
-        sessionToken: dto.sessionToken,
+        customerSessionId: dto.sessionToken, // FIXED mapping
         status: OrderStatus.PENDING,
-        items: orderItems,
       });
 
       const savedOrder = await queryRunner.manager.save(Order, order);
+
+      // IMPORTANT: attach order to items
+      for (const item of orderItems) {
+        item.order = savedOrder;
+      }
+
+      await queryRunner.manager.save(OrderItem, orderItems);
+
       await queryRunner.commitTransaction();
 
-      return savedOrder;
+      return (await queryRunner.manager.findOne(Order, {
+        where: { id: savedOrder.id },
+        relations: ['items', 'items.product', 'table'],
+      })) as Order;
     } catch (err) {
       await queryRunner.rollbackTransaction();
       throw err;
@@ -97,11 +103,7 @@ export class OrdersService {
     return order;
   }
 
-  async updateStatus(
-    businessId: string,
-    id: string,
-    dto: UpdateOrderStatusDto,
-  ): Promise<Order> {
+  async updateStatus(businessId: string, id: string, dto: UpdateOrderStatusDto): Promise<Order> {
     const order = await this.findOne(businessId, id);
 
     // Validate transition
@@ -129,9 +131,7 @@ export class OrdersService {
     };
 
     if (!transitions[current].includes(next)) {
-      throw new BadRequestException(
-        `Invalid status transition from ${current} to ${next}`,
-      );
+      throw new BadRequestException(`Invalid status transition from ${current} to ${next}`);
     }
   }
 }

@@ -11,6 +11,10 @@ import {
 import { Business } from '@modules/business/entities/business.entity';
 import { Table } from '@modules/tables/entities/table.entity';
 import { OrderItem } from './order-item.entity';
+import { Staff } from '@modules/staff/entities/staff.entity';
+import { Payment } from '@modules/payments/entities/payment.entity';
+import { CustomerSession } from '@modules/customer-session/entities/customer-session.entity';
+import { PaymentMethod, OrderPaymentStatus } from '@common/enums/payment.enum';
 
 export enum OrderStatus {
   PENDING = 'PENDING',
@@ -22,16 +26,7 @@ export enum OrderStatus {
   CANCELLED = 'CANCELLED',
 }
 
-export enum PaymentMethod {
-  CASH = 'CASH',
-  POS = 'POS',
-  ONLINE = 'ONLINE',
-}
-
-export enum PaymentStatus {
-  UNPAID = 'UNPAID',
-  PAID = 'PAID',
-}
+// payment enums moved to common enums to avoid duplication and import cycles
 
 @Entity('orders')
 export class Order {
@@ -53,36 +48,47 @@ export class Order {
   table: Table;
 
   @Column({ nullable: true })
-  staffId: string;
+  waiterId: string;
 
   @Column({
     type: 'enum',
     enum: OrderStatus,
     default: OrderStatus.PENDING,
+    enumName: 'order_status_enum',
   })
   status: OrderStatus;
 
   @Column({
     type: 'enum',
     enum: PaymentMethod,
+    enumName: 'order_payment_method_enum',
     nullable: true,
   })
   paymentMethod: PaymentMethod;
 
   @Column({
     type: 'enum',
-    enum: PaymentStatus,
-    default: PaymentStatus.UNPAID,
+    enum: OrderPaymentStatus,
+    enumName: 'order_payment_status_enum',
+    default: OrderPaymentStatus.UNPAID,
   })
-  paymentStatus: PaymentStatus;
+  paymentStatus: OrderPaymentStatus;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   totalAmount: number;
 
   @Column({ nullable: true })
-  sessionToken: string;
+  customerSessionId: string;
 
-  @OneToMany(() => OrderItem, (item) => item.order, { cascade: true })
+  @ManyToOne(() => CustomerSession, (s) => s.orders, { nullable: true })
+  @JoinColumn({ name: 'customerSessionId' })
+  customerSession: CustomerSession;
+
+  @ManyToOne(() => Staff, (s) => s.servedOrders, { nullable: true })
+  @JoinColumn({ name: 'waiterId' })
+  waiter: Staff;
+
+  @OneToMany(() => OrderItem, (item) => item.order, { cascade: ['insert', 'update'] })
   items: OrderItem[];
 
   @CreateDateColumn()
@@ -90,4 +96,7 @@ export class Order {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @OneToMany(() => Payment, (p) => p.order)
+  payments: Payment[];
 }

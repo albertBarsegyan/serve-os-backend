@@ -1,10 +1,4 @@
-import {
-  IsEmail,
-  IsNotEmpty,
-  IsString,
-  MinLength,
-  IsOptional,
-} from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class LoginDto {
@@ -18,6 +12,10 @@ export class LoginDto {
   password: string;
 }
 
+/**
+ * RegisterDto - handles user registration
+ * Note: role is intentionally excluded and always defaults to Role.OWNER
+ */
 export class RegisterDto {
   @ApiProperty({ example: 'user@restaurant.com' })
   @IsEmail()

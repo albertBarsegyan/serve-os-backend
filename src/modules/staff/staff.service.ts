@@ -34,11 +34,7 @@ export class StaffService {
     return staff;
   }
 
-  async update(
-    businessId: string,
-    id: string,
-    dto: Partial<CreateStaffDto>,
-  ): Promise<Staff> {
+  async update(businessId: string, id: string, dto: Partial<CreateStaffDto>): Promise<Staff> {
     await this.findOne(businessId, id);
     await this.staffRepository.update(id, dto);
     return this.findOne(businessId, id);

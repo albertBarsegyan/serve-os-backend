@@ -1,19 +1,24 @@
 import { Injectable } from '@nestjs/common';
-import { OrdersService } from '@modules/orders/orders.service';
-import { OrderStatus } from '@modules/orders/entities/order.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Order, OrderStatus } from '@modules/orders/entities/order.entity';
 
 @Injectable()
 export class KitchenService {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    @InjectRepository(Order)
+    private readonly orderRepository: Repository<Order>,
+  ) {}
 
   async getActiveOrders(businessId: string) {
-    const orders = await this.ordersService.findAll(businessId);
+    const orders = await this.orderRepository.find({
+      where: { businessId },
+      relations: ['items', 'items.product', 'table'],
+      order: { createdAt: 'DESC' },
+    });
+
     return orders.filter((order) =>
-      [
-        OrderStatus.CONFIRMED,
-        OrderStatus.PREPARING,
-        OrderStatus.READY,
-      ].includes(order.status),
+      [OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.READY].includes(order.status),
     );
   }
 }

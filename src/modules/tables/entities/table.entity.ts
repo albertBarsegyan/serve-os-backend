@@ -4,8 +4,12 @@ import {
   Column,
   ManyToOne,
   JoinColumn,
+  OneToMany,
+  CreateDateColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { Business } from '@modules/business/entities/business.entity';
+import { Order } from '@modules/orders/entities/order.entity';
 
 @Entity('tables')
 export class Table {
@@ -30,4 +34,13 @@ export class Table {
 
   @Column({ default: true })
   isActive: boolean;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+
+  @OneToMany(() => Order, (o) => o.table)
+  orders: Order[];
 }

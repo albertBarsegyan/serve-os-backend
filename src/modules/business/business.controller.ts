@@ -1,21 +1,10 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-} from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { BusinessService } from './business.service';
 import { CreateBusinessDto, UpdateBusinessDto } from './dto/business.dto';
 import { Public } from '@common/decorators/public.decorator';
+import { Roles } from '@common/decorators/roles.decorator';
+import { Role } from '@common/enums/role.enum';
 
 @ApiTags('Business')
 @ApiBearerAuth()
@@ -31,12 +20,14 @@ export class BusinessController {
     return this.businessService.create(createBusinessDto);
   }
 
+  @Roles(Role.OWNER)
   @Get()
   @ApiOperation({ summary: 'Get all businesses' })
   findAll() {
     return this.businessService.findAll();
   }
 
+  @Roles(Role.OWNER)
   @Get(':id')
   @ApiOperation({ summary: 'Get a business by ID' })
   @ApiResponse({ status: 200, description: 'Business found' })
@@ -45,15 +36,14 @@ export class BusinessController {
     return this.businessService.findOne(id);
   }
 
+  @Roles(Role.OWNER)
   @Patch(':id')
   @ApiOperation({ summary: 'Update a business' })
-  update(
-    @Param('id') id: string,
-    @Body() updateBusinessDto: UpdateBusinessDto,
-  ) {
+  update(@Param('id') id: string, @Body() updateBusinessDto: UpdateBusinessDto) {
     return this.businessService.update(id, updateBusinessDto);
   }
 
+  @Roles(Role.OWNER)
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a business' })
   remove(@Param('id') id: string) {

@@ -1,28 +1,20 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  UseGuards,
-} from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Patch, Param, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto, UpdateOrderStatusDto } from './dto/orders.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
+import { FeatureGuard } from '@common/guards/feature.guard';
+import { RequireBusinessFeature } from '@common/decorators/require-feature.decorator';
 import { Public } from '@common/decorators/public.decorator';
+import { Roles } from '@common/decorators/roles.decorator';
+import { BusinessFeature } from '@common/enums/business-feature.enum';
+import { Role } from '@common/enums/role.enum';
 
 @ApiTags('Orders')
 @ApiBearerAuth()
 @Controller('orders')
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, FeatureGuard)
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
@@ -34,18 +26,36 @@ export class OrdersController {
     return this.ordersService.create(businessId, dto);
   }
 
+  @RequireBusinessFeature(
+    BusinessFeature.DINE_IN,
+    BusinessFeature.TAKEAWAY,
+    BusinessFeature.DELIVERY,
+  )
+  @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
   @Get()
   @ApiOperation({ summary: 'Get all orders for the business' })
   findAll(@Tenant() businessId: string) {
     return this.ordersService.findAll(businessId);
   }
 
+  @RequireBusinessFeature(
+    BusinessFeature.DINE_IN,
+    BusinessFeature.TAKEAWAY,
+    BusinessFeature.DELIVERY,
+  )
+  @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
   @Get(':id')
   @ApiOperation({ summary: 'Get an order by ID' })
   findOne(@Tenant() businessId: string, @Param('id') id: string) {
     return this.ordersService.findOne(businessId, id);
   }
 
+  @RequireBusinessFeature(
+    BusinessFeature.DINE_IN,
+    BusinessFeature.TAKEAWAY,
+    BusinessFeature.DELIVERY,
+  )
+  @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
   @Patch(':id/status')
   @ApiOperation({ summary: 'Update order status' })
   @ApiResponse({ status: 200, description: 'Status updated' })

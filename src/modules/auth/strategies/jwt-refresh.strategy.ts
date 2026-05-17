@@ -12,14 +12,10 @@ interface JwtRefreshPayload {
 }
 
 @Injectable()
-export class JwtRefreshStrategy extends PassportStrategy(
-  Strategy,
-  'jwt-refresh',
-) {
+export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
   constructor(private configService: ConfigService) {
     super({
-      jwtFromRequest: (req: Request) =>
-        req?.cookies?.['refresh_token'] as string,
+      jwtFromRequest: (req: Request) => req?.cookies?.['refresh_token'] as string,
       ignoreExpiration: false,
       secretOrKey: configService.get<string>('JWT_REFRESH_SECRET') as string,
       passReqToCallback: true,

@@ -5,15 +5,12 @@ import {
   ManyToOne,
   JoinColumn,
   CreateDateColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { Business } from '@modules/business/entities/business.entity';
-import { Order, PaymentMethod } from '@modules/orders/entities/order.entity';
-
-export enum PaymentStatus {
-  PENDING = 'PENDING',
-  CONFIRMED = 'CONFIRMED',
-  FAILED = 'FAILED',
-}
+import { Order } from '@modules/orders/entities/order.entity';
+import { PaymentMethod, PaymentStatus } from '@common/enums/payment.enum';
+import { Staff } from '@modules/staff/entities/staff.entity';
 
 @Entity('payments')
 export class Payment {
@@ -37,6 +34,7 @@ export class Payment {
   @Column({
     type: 'enum',
     enum: PaymentMethod,
+    enumName: 'payment_method_enum',
   })
   method: PaymentMethod;
 
@@ -44,6 +42,7 @@ export class Payment {
     type: 'enum',
     enum: PaymentStatus,
     default: PaymentStatus.PENDING,
+    enumName: 'payment_status_enum',
   })
   status: PaymentStatus;
 
@@ -56,6 +55,13 @@ export class Payment {
   @Column({ type: 'uuid', nullable: true })
   confirmedBy: string | null; // staffId
 
+  @ManyToOne(() => Staff, (s) => s.confirmedPayments, { nullable: true })
+  @JoinColumn({ name: 'confirmedBy' })
+  confirmedByStaff: Staff;
+
   @CreateDateColumn()
   createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
 }

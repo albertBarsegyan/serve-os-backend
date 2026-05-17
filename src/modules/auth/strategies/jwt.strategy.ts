@@ -17,8 +17,7 @@ interface JwtPayload {
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(private configService: ConfigService) {
     super({
-      jwtFromRequest: (req: Request) =>
-        req?.cookies?.['access_token'] as string,
+      jwtFromRequest: (req: Request) => req?.cookies?.['access_token'] as string,
       ignoreExpiration: false,
       secretOrKey: configService.get<string>('JWT_SECRET') as string,
     });

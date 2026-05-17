@@ -15,9 +15,7 @@ import { Order } from '@modules/orders/entities/order.entity';
     origin: '*',
   },
 })
-export class KitchenGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
-{
+export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(private readonly logger: PinoLogger) {}
 
   @WebSocketServer()
@@ -34,10 +32,7 @@ export class KitchenGateway
   @SubscribeMessage('join-kitchen')
   async handleJoinKitchen(client: Socket, @MessageBody() businessId: string) {
     await client.join(`kitchen-${businessId}`);
-    this.logger.debug(
-      { clientId: client.id, businessId },
-      'Kitchen client joined room',
-    );
+    this.logger.debug({ clientId: client.id, businessId }, 'Kitchen client joined room');
     return { event: 'joined', data: businessId };
   }
 
@@ -62,8 +57,6 @@ export class KitchenGateway
       },
       'Emitting order status update to kitchen room',
     );
-    this.server
-      .to(`kitchen-${order.businessId}`)
-      .emit('order-status-update', order);
+    this.server.to(`kitchen-${order.businessId}`).emit('order-status-update', order);
   }
 }
