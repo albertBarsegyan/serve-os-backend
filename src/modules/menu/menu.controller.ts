@@ -18,33 +18,33 @@ export class MenuController {
   @Post('categories')
   @ApiOperation({ summary: 'Create a new category' })
   @ApiResponse({ status: 201, description: 'Category successfully created' })
-  createCategory(@Tenant() businessId: string, @Body() dto: CreateCategoryDto) {
+  createCategory(@Tenant(true) businessId: string, @Body() dto: CreateCategoryDto) {
     return this.menuService.createCategory(businessId, dto);
   }
 
   @Get('categories')
   @ApiOperation({ summary: 'Get all categories for the business' })
-  findAllCategories(@Tenant() businessId: string) {
+  findAllCategories(@Tenant(true) businessId: string) {
     return this.menuService.findAllCategories(businessId);
   }
 
   @Post('products')
   @ApiOperation({ summary: 'Create a new product' })
   @ApiResponse({ status: 201, description: 'Product successfully created' })
-  createProduct(@Tenant() businessId: string, @Body() dto: CreateProductDto) {
+  createProduct(@Tenant(true) businessId: string, @Body() dto: CreateProductDto) {
     return this.menuService.createProduct(businessId, dto);
   }
 
   @Get('products')
   @ApiOperation({ summary: 'Get all products for the business' })
-  findAllProducts(@Tenant() businessId: string) {
+  findAllProducts(@Tenant(true) businessId: string) {
     return this.menuService.findAllProducts(businessId);
   }
 
   @Patch('products/:id')
   @ApiOperation({ summary: 'Update a product' })
   updateProduct(
-    @Tenant() businessId: string,
+    @Tenant(true) businessId: string,
     @Param('id') id: string,
     @Body() dto: Partial<CreateProductDto>,
   ) {
@@ -53,7 +53,7 @@ export class MenuController {
 
   @Delete('products/:id')
   @ApiOperation({ summary: 'Delete a product' })
-  removeProduct(@Tenant() businessId: string, @Param('id') id: string) {
+  removeProduct(@Tenant(true) businessId: string, @Param('id') id: string) {
     return this.menuService.removeProduct(businessId, id);
   }
 }

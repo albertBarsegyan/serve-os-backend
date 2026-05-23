@@ -6,7 +6,6 @@ import { Request } from 'express';
 
 interface JwtRefreshPayload {
   sub: string;
-  email: string;
   iat?: number;
   exp?: number;
 }
@@ -15,7 +14,9 @@ interface JwtRefreshPayload {
 export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
   constructor(private configService: ConfigService) {
     super({
-      jwtFromRequest: (req: Request) => req?.cookies?.['refresh_token'] as string,
+      jwtFromRequest: (req: Request) => {
+        return req?.cookies?.['refresh_token'] as string;
+      },
       ignoreExpiration: false,
       secretOrKey: configService.get<string>('JWT_REFRESH_SECRET') as string,
       passReqToCallback: true,
@@ -27,6 +28,9 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token not found');
     }
-    return { sub: payload.sub, email: payload.email, refreshToken };
+
+    console.log('payload validate refresh', payload);
+
+    return { sub: payload.sub, refreshToken };
   }
 }

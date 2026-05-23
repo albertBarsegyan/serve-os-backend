@@ -1,8 +1,8 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_GUARD, APP_INTERCEPTOR, APP_FILTER } from '@nestjs/core';
-import { randomUUID } from 'crypto';
+import { APP_GUARD, APP_FILTER } from '@nestjs/core';
+import { randomUUID } from 'node:crypto';
 import { LoggerModule } from 'nestjs-pino';
 
 import { AuthModule } from '@modules/auth/auth.module';
@@ -14,11 +14,12 @@ import { OrdersModule } from '@modules/orders/orders.module';
 import { KitchenModule } from '@modules/kitchen/kitchen.module';
 import { PaymentsModule } from '@modules/payments/payments.module';
 
+import { TenantModule } from '@common/tenant/tenant.module';
+
 import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
-import { TenantGuard } from '@common/guards/tenant.guard';
 import { RolesGuard } from '@common/guards/roles.guard';
-import { TenantInterceptor } from '@common/interceptors/tenant.interceptor';
 import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
+import { TenantMiddleware } from '@common/middleware/tenant.middleware';
 
 @Module({
   imports: [
@@ -38,12 +39,16 @@ import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
             level: logLevel,
             genReqId: (req, res) => {
               const incomingRequestId = req.headers['x-request-id'];
-              const requestId =
-                typeof incomingRequestId === 'string'
-                  ? incomingRequestId
-                  : Array.isArray(incomingRequestId)
-                    ? incomingRequestId[0]
-                    : randomUUID();
+              let requestId: string;
+
+              if (typeof incomingRequestId === 'string') {
+                requestId = incomingRequestId;
+              } else if (Array.isArray(incomingRequestId)) {
+                requestId = incomingRequestId[0];
+              } else {
+                requestId = randomUUID();
+              }
+
               res.setHeader('x-request-id', requestId);
               return requestId;
             },
@@ -67,11 +72,12 @@ import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
                   },
                 },
             customProps: (req) => {
-              const user = (req as { user?: { sub?: string; businessId?: string } }).user;
+              const user = (req as { user?: { id?: string } }).user;
+
               return {
                 context: 'HTTP',
-                userId: user?.sub,
-                businessId: user?.businessId,
+                userId: user?.id,
+                businessId: (req as { businessId?: string | null }).businessId ?? null,
               };
             },
           },
@@ -95,6 +101,7 @@ import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
       }),
       inject: [ConfigService],
     }),
+    TenantModule,
     AuthModule,
     BusinessModule,
     TablesModule,
@@ -111,15 +118,7 @@ import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
     },
     {
       provide: APP_GUARD,
-      useClass: TenantGuard,
-    },
-    {
-      provide: APP_GUARD,
       useClass: RolesGuard,
-    },
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: TenantInterceptor,
     },
     {
       provide: APP_FILTER,
@@ -127,4 +126,8 @@ import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(TenantMiddleware).forRoutes('*');
+  }
+}

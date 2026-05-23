@@ -5,7 +5,10 @@ This document is a frontend-facing API contract for implementing the application
 Notes
 - Base URL: /api (adjust if your frontend proxies differently)
 - Auth: JWT in `Authorization: Bearer <token>` header
-- Tenant/Business context: the backend will infer business context from the authenticated user's JWT + Tenant guard. For endpoints that act on a specific business resource, the businessId will be part of the returned objects.
+ - Tenant/Business context: the frontend MUST send the active business id in the `x-business-id` HTTP header on requests that operate within a business context. The backend will NOT rely on businessId stored in the JWT.
+   - Header name: `x-business-id`
+   - Value: UUID string of the active business (e.g. `b3e1f6aa-...`). If the user has no business (onboarding state), omit the header or send an empty value.
+   - The Tenant middleware reads `x-business-id` and normalizes it; tenant-protected routes will validate the user's access server-side.
 - Validation: The backend returns 400 for invalid requests, 401 for unauthorized, 403 for forbidden (roles / features), and 404 for not found.
 
 Common Enums (frontend types)

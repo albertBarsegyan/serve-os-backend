@@ -7,9 +7,10 @@ import { OrdersController } from './orders.controller';
 import { Product } from '@modules/menu/entities/product.entity';
 import { KitchenModule } from '@modules/kitchen/kitchen.module';
 import { Business } from '@modules/business/entities/business.entity';
+import { Staff } from '@modules/staff/entities/staff.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Order, OrderItem, Product, Business]), KitchenModule],
+  imports: [TypeOrmModule.forFeature([Order, OrderItem, Product, Business, Staff]), KitchenModule],
   controllers: [OrdersController],
   providers: [OrdersService],
   exports: [OrdersService],

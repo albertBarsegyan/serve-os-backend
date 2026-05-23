@@ -23,14 +23,14 @@ export class TablesController {
   @Post()
   @ApiOperation({ summary: 'Create a new table' })
   @ApiResponse({ status: 201, description: 'Table successfully created' })
-  create(@Tenant() businessId: string, @Body() dto: CreateTableDto) {
+  create(@Tenant(true) businessId: string, @Body() dto: CreateTableDto) {
     return this.tablesService.create(businessId, dto);
   }
 
   @Roles(Role.OWNER, Role.ADMIN)
   @Get()
   @ApiOperation({ summary: 'Get all tables for the business' })
-  findAll(@Tenant() businessId: string) {
+  findAll(@Tenant(true) businessId: string) {
     return this.tablesService.findAll(businessId);
   }
 
@@ -46,7 +46,7 @@ export class TablesController {
   @Roles(Role.OWNER, Role.ADMIN)
   @Get(':id')
   @ApiOperation({ summary: 'Get a table by ID' })
-  findOne(@Tenant() businessId: string, @Param('id') id: string) {
+  findOne(@Tenant(true) businessId: string, @Param('id') id: string) {
     return this.tablesService.findOne(businessId, id);
   }
 
@@ -54,7 +54,7 @@ export class TablesController {
   @Patch(':id')
   @ApiOperation({ summary: 'Update a table' })
   update(
-    @Tenant() businessId: string,
+    @Tenant(true) businessId: string,
     @Param('id') id: string,
     @Body() dto: Partial<CreateTableDto>,
   ) {
@@ -64,7 +64,7 @@ export class TablesController {
   @Roles(Role.OWNER, Role.ADMIN)
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a table' })
-  remove(@Tenant() businessId: string, @Param('id') id: string) {
+  remove(@Tenant(true) businessId: string, @Param('id') id: string) {
     return this.tablesService.remove(businessId, id);
   }
 }

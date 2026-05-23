@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -8,6 +8,7 @@ import { FeatureGuard } from '@common/guards/feature.guard';
 import { RequireBusinessFeature } from '@common/decorators/require-feature.decorator';
 import { Public } from '@common/decorators/public.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
+import { AuthUser } from '@common/decorators/auth-user.decorator';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
 import { Role } from '@common/enums/role.enum';
 
@@ -22,7 +23,7 @@ export class PaymentsController {
   @Post()
   @ApiOperation({ summary: 'Initiate a payment' })
   @ApiResponse({ status: 201, description: 'Payment record created' })
-  create(@Tenant() businessId: string, @Body() dto: CreatePaymentDto) {
+  create(@Tenant(true) businessId: string, @Body() dto: CreatePaymentDto) {
     return this.paymentsService.create(businessId, dto);
   }
 
@@ -34,7 +35,7 @@ export class PaymentsController {
   @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
   @Get()
   @ApiOperation({ summary: 'Get all payments for the business' })
-  findAll(@Tenant() businessId: string) {
+  findAll(@Tenant(true) businessId: string) {
     return this.paymentsService.findAll(businessId);
   }
 
@@ -47,9 +48,11 @@ export class PaymentsController {
   @Patch(':id/confirm')
   @ApiOperation({ summary: 'Confirm a payment (Staff only)' })
   @ApiResponse({ status: 200, description: 'Payment confirmed' })
-  confirm(@Param('id') id: string, @Request() req: any) {
-    // const staffId = req?.user?.userId as number;
-    const staffId = String(100);
-    return this.paymentsService.confirmPayment(id, staffId);
+  confirm(
+    @Tenant(true) businessId: string,
+    @Param('id') id: string,
+    @AuthUser() authUser: { id: string },
+  ) {
+    return this.paymentsService.confirmPayment(id, businessId, authUser.id);
   }
 }

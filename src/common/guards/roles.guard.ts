@@ -1,7 +1,9 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import { ROLES_KEY } from '@common/decorators/roles.decorator';
 import { Role } from '@common/enums/role.enum';
+import { PinoLogger } from 'nestjs-pino';
 
 /**
  * RolesGuard - Role-based access control guard
@@ -11,7 +13,7 @@ import { Role } from '@common/enums/role.enum';
  *
  * Features:
  * - Reads roles metadata from @Roles() decorator applied to route handler or class
- * - Extracts user role from JWT payload (req.user.role)
+ * - Extracts role from the active business context (req.business.role)
  * - Returns 403 Forbidden if user's role is not in the allowed list
  * - If no roles are specified via @Roles(), the route is accessible to all authenticated users
  *
@@ -25,32 +27,34 @@ import { Role } from '@common/enums/role.enum';
  */
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  constructor(
+    private readonly logger: PinoLogger,
+    private readonly reflector: Reflector,
+  ) {}
 
   canActivate(context: ExecutionContext): boolean {
-    // Get allowed roles from @Roles() decorator metadata
     const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
 
-    // If no roles are specified, allow access (will be caught by auth guard if needed)
-    if (!requiredRoles) {
+    if (!requiredRoles?.length) {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest();
-    const userRole = request.user?.role as Role;
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const userRole = request.user?.role; // always from verified JWT
 
     if (!userRole) {
-      throw new ForbiddenException('User role not found in token');
+      throw new ForbiddenException('Insufficient permissions');
     }
 
-    const hasRequiredRole = requiredRoles.includes(userRole);
-    if (!hasRequiredRole) {
-      throw new ForbiddenException(
-        `Insufficient permissions. Required roles: ${requiredRoles.join(', ')}. User role: ${userRole}`,
+    if (!requiredRoles.includes(userRole)) {
+      this.logger.warn(
+        `Access denied for role "${userRole}". Required: ${requiredRoles.join(', ')}`,
       );
+
+      throw new ForbiddenException('Insufficient permissions');
     }
 
     return true;

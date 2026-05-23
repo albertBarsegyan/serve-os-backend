@@ -4,12 +4,9 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
-  OneToMany,
 } from 'typeorm';
 import { Exclude } from 'class-transformer';
 import { Role } from '@common/enums/role.enum';
-import { Business } from '@modules/business/entities/business.entity';
-import { Staff } from '@modules/staff/entities/staff.entity';
 
 @Entity('users')
 export class User {
@@ -43,15 +40,13 @@ export class User {
   @Column({ default: true })
   isActive: boolean;
 
+  @Column({ nullable: true, type: 'text' })
+  @Exclude()
+  refreshToken: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 
   @UpdateDateColumn()
   updatedAt: Date;
-
-  @OneToMany(() => Business, (b) => b.owner)
-  ownedBusinesses: Business[];
-
-  @OneToMany(() => Staff, (s) => s.user)
-  staffRecords: Staff[];
 }

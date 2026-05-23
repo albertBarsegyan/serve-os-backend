@@ -9,9 +9,9 @@ import { CreateCategoryDto, CreateProductDto } from './dto/menu.dto';
 export class MenuService {
   constructor(
     @InjectRepository(MenuCategory)
-    private categoryRepository: Repository<MenuCategory>,
+    private readonly categoryRepository: Repository<MenuCategory>,
     @InjectRepository(Product)
-    private productRepository: Repository<Product>,
+    private readonly productRepository: Repository<Product>,
   ) {}
 
   // Category CRUD
@@ -38,7 +38,6 @@ export class MenuService {
     return category;
   }
 
-  // Product CRUD
   async createProduct(businessId: string, dto: CreateProductDto): Promise<Product> {
     const category = await this.findCategory(businessId, dto.categoryId);
     const product = this.productRepository.create({ ...dto, businessId });
@@ -72,7 +71,7 @@ export class MenuService {
     if (dto.categoryId) {
       await this.findCategory(businessId, dto.categoryId);
     }
-    await this.productRepository.update(id, dto);
+    await this.productRepository.update({ id, businessId }, dto);
     return this.findProduct(businessId, id);
   }
 

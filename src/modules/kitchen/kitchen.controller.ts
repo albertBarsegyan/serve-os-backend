@@ -20,7 +20,7 @@ export class KitchenController {
 
   @Get('active-orders')
   @ApiOperation({ summary: 'Get all active orders for the kitchen display' })
-  getActiveOrders(@Tenant() businessId: string) {
+  getActiveOrders(@Tenant(true) businessId: string) {
     return this.kitchenService.getActiveOrders(businessId);
   }
 }

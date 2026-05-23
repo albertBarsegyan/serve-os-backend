@@ -22,7 +22,6 @@ export class MenuCategory {
   @ManyToOne(() => KitchenStation, (k) => k.menuCategories, { nullable: true })
   @JoinColumn({ name: 'kitchenStationId' })
   kitchenStation: KitchenStation;
-  // ───────────────────
 
   @Column()
   name: string;

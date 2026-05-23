@@ -22,7 +22,7 @@ export class OrdersController {
   @Post()
   @ApiOperation({ summary: 'Place a new order (Guest or Staff)' })
   @ApiResponse({ status: 201, description: 'Order successfully placed' })
-  create(@Tenant() businessId: string, @Body() dto: CreateOrderDto) {
+  create(@Tenant(true) businessId: string, @Body() dto: CreateOrderDto) {
     return this.ordersService.create(businessId, dto);
   }
 
@@ -34,7 +34,7 @@ export class OrdersController {
   @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
   @Get()
   @ApiOperation({ summary: 'Get all orders for the business' })
-  findAll(@Tenant() businessId: string) {
+  findAll(@Tenant(true) businessId: string) {
     return this.ordersService.findAll(businessId);
   }
 
@@ -46,7 +46,7 @@ export class OrdersController {
   @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
   @Get(':id')
   @ApiOperation({ summary: 'Get an order by ID' })
-  findOne(@Tenant() businessId: string, @Param('id') id: string) {
+  findOne(@Tenant(true) businessId: string, @Param('id') id: string) {
     return this.ordersService.findOne(businessId, id);
   }
 
@@ -61,7 +61,7 @@ export class OrdersController {
   @ApiResponse({ status: 200, description: 'Status updated' })
   @ApiResponse({ status: 400, description: 'Invalid status transition' })
   updateStatus(
-    @Tenant() businessId: string,
+    @Tenant(true) businessId: string,
     @Param('id') id: string,
     @Body() dto: UpdateOrderStatusDto,
   ) {

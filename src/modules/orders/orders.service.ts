@@ -6,6 +6,8 @@ import { OrderItem } from './entities/order-item.entity';
 import { CreateOrderDto, UpdateOrderStatusDto } from './dto/orders.dto';
 import { Product } from '@modules/menu/entities/product.entity';
 import { KitchenGateway } from '@modules/kitchen/kitchen.gateway';
+import { Table } from '@modules/tables/entities/table.entity';
+import { Staff } from '@modules/staff/entities/staff.entity';
 
 @Injectable()
 export class OrdersService {
@@ -30,6 +32,28 @@ export class OrdersService {
       let totalAmount = 0;
       const orderItems: OrderItem[] = [];
 
+      const table = await queryRunner.manager.findOne(Table, {
+        where: { id: dto.tableId, businessId },
+      });
+
+      if (!table) {
+        throw new NotFoundException(`Table with ID ${dto.tableId} not found`);
+      }
+
+      let staffId: string | undefined;
+
+      if (dto.staffId) {
+        const staff = await queryRunner.manager.findOne(Staff, {
+          where: { id: dto.staffId, businessId },
+        });
+
+        if (!staff) {
+          throw new NotFoundException(`Staff with ID ${dto.staffId} not found`);
+        }
+
+        staffId = staff.id;
+      }
+
       for (const itemDto of dto.items) {
         const product = await queryRunner.manager.findOne(Product, {
           where: { id: itemDto.productId, businessId },
@@ -52,23 +76,22 @@ export class OrdersService {
         orderItems.push(orderItem);
       }
 
-      const order = queryRunner.manager.create(Order, {
-        businessId,
-        tableId: dto.tableId,
-        waiterId: dto.staffId, // FIXED mapping
-        totalAmount,
-        customerSessionId: dto.sessionToken, // FIXED mapping
-        status: OrderStatus.PENDING,
-      });
+      const order = new Order();
+      order.businessId = businessId;
+      order.tableId = dto.tableId;
+      order.waiterId = staffId as string;
+      order.totalAmount = totalAmount;
+      order.customerSessionId = dto.sessionToken as string;
+      order.status = OrderStatus.PENDING;
 
-      const savedOrder = await queryRunner.manager.save(Order, order);
+      const savedOrder = await queryRunner.manager.save(order);
 
       // IMPORTANT: attach order to items
       for (const item of orderItems) {
         item.order = savedOrder;
       }
 
-      await queryRunner.manager.save(OrderItem, orderItems);
+      await queryRunner.manager.save(orderItems);
 
       await queryRunner.commitTransaction();
 

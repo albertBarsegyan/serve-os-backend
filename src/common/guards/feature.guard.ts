@@ -5,7 +5,7 @@ import { Business } from '@modules/business/entities/business.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
-import { AuthenticatedRequest } from '@common/guards/tenant.guard';
+import { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 
 /**
  * FeatureGuard - Capability-driven access control guard
@@ -16,7 +16,7 @@ import { AuthenticatedRequest } from '@common/guards/tenant.guard';
  *
  * Behavior:
  * 1. Reads required features metadata from the @RequireBusinessFeature() decorator
- * 2. Extracts businessId from authenticated request (req.user.businessId)
+ * 2. Extracts businessId from request business context (req.businessId)
  * 3. Loads the Business entity and checks its enabled features
  * 4. Throws 403 Forbidden if any required feature is missing
  * 5. If no @RequireBusinessFeature is specified, allows access (feature checks disabled for that route)
@@ -53,7 +53,7 @@ export class FeatureGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    const businessId = request.user?.businessId;
+    const businessId = request.business?.id ?? request.businessId ?? null;
 
     if (!businessId) {
       throw new ForbiddenException('No business context available to check features');

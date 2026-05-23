@@ -25,7 +25,7 @@ services:
     container_name: serve_os_app_dev
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${PORT}:${PORT}"
+      - "${PORT}:${PORT}"
     env_file:
       - .env.development
     volumes:
@@ -37,6 +37,7 @@ services:
         condition: service_healthy
     networks:
       - serve_os_network_dev
+      - serve_os_shared
 
   migrate:
     build:
@@ -78,3 +79,5 @@ volumes:
 networks:
   serve_os_network_dev:
     driver: bridge
+  serve_os_shared:
+    external: true

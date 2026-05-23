@@ -5,15 +5,16 @@ import { Payment } from './entities/payment.entity';
 import { Order } from '@modules/orders/entities/order.entity';
 import { PaymentMethod, PaymentStatus, OrderPaymentStatus } from '@common/enums/payment.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
+import { Staff } from '@modules/staff/entities/staff.entity';
 
 @Injectable()
 export class PaymentsService {
   constructor(
     @InjectRepository(Payment)
-    private paymentRepository: Repository<Payment>,
+    private readonly paymentRepository: Repository<Payment>,
     @InjectRepository(Order)
-    private orderRepository: Repository<Order>,
-    private dataSource: DataSource,
+    private readonly orderRepository: Repository<Order>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(businessId: string, dto: CreatePaymentDto): Promise<Payment> {
@@ -35,27 +36,31 @@ export class PaymentsService {
 
     if (dto.method === PaymentMethod.ONLINE) {
       // Mock online payment confirmation
-      this.confirmOnlinePayment(savedPayment.id);
+      this.confirmOnlinePayment(savedPayment.id, businessId);
     }
 
     return savedPayment;
   }
 
-  private confirmOnlinePayment(paymentId: string) {
+  private confirmOnlinePayment(paymentId: string, businessId: string) {
     // Simulate async webhook
     setTimeout(() => {
-      this.confirmPayment(paymentId, null);
+      void this.confirmPayment(paymentId, businessId, null);
     }, 2000);
   }
 
-  async confirmPayment(paymentId: string, staffId: string | null): Promise<Payment> {
+  async confirmPayment(
+    paymentId: string,
+    businessId: string | null,
+    userId: string | null,
+  ): Promise<Payment> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
       const payment = await queryRunner.manager.findOne(Payment, {
-        where: { id: paymentId },
+        where: businessId ? { id: paymentId, businessId } : { id: paymentId },
         relations: ['order'],
       });
 
@@ -69,14 +74,23 @@ export class PaymentsService {
 
       payment.status = PaymentStatus.CONFIRMED;
       payment.confirmedAt = new Date();
-      payment.confirmedBy = staffId;
 
-      const updatedPayment = await queryRunner.manager.save(Payment, payment);
+      if (businessId && userId) {
+        const staff = await queryRunner.manager.findOne(Staff, {
+          where: { userId, businessId },
+        });
+
+        payment.confirmedBy = staff?.id ?? null;
+      } else {
+        payment.confirmedBy = null;
+      }
+
+      const updatedPayment = await queryRunner.manager.save(payment);
 
       // Update order payment status
       const order = payment.order;
       order.paymentStatus = OrderPaymentStatus.PAID;
-      await queryRunner.manager.save(Order, order);
+      await queryRunner.manager.save(order);
 
       await queryRunner.commitTransaction();
       return updatedPayment;

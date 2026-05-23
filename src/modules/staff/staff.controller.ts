@@ -18,26 +18,26 @@ export class StaffController {
   @Post()
   @ApiOperation({ summary: 'Add a new staff member' })
   @ApiResponse({ status: 201, description: 'Staff successfully added' })
-  create(@Tenant() businessId: string, @Body() dto: CreateStaffDto) {
+  create(@Tenant(true) businessId: string, @Body() dto: CreateStaffDto) {
     return this.staffService.create(businessId, dto);
   }
 
   @Get()
   @ApiOperation({ summary: 'Get all staff for the business' })
-  findAll(@Tenant() businessId: string) {
+  findAll(@Tenant(true) businessId: string) {
     return this.staffService.findAll(businessId);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a staff member by ID' })
-  findOne(@Tenant() businessId: string, @Param('id') id: string) {
+  findOne(@Tenant(true) businessId: string, @Param('id') id: string) {
     return this.staffService.findOne(businessId, id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update staff member details' })
   update(
-    @Tenant() businessId: string,
+    @Tenant(true) businessId: string,
     @Param('id') id: string,
     @Body() dto: Partial<CreateStaffDto>,
   ) {
@@ -46,7 +46,7 @@ export class StaffController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Remove a staff member' })
-  remove(@Tenant() businessId: string, @Param('id') id: string) {
+  remove(@Tenant(true) businessId: string, @Param('id') id: string) {
     return this.staffService.remove(businessId, id);
   }
 }
