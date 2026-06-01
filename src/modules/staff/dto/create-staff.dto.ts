@@ -1,15 +1,4 @@
-import { IsNotEmpty, IsUUID, IsEnum } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
-import { StaffRole } from '@common/enums/staff-role.enum';
-
-export class CreateStaffDto {
-  @ApiProperty({ example: 'uuid-v4-user-id' })
-  @IsNotEmpty()
-  @IsUUID()
-  userId: string;
-
-  @ApiProperty({ enum: StaffRole, example: StaffRole.WAITER })
-  @IsNotEmpty()
-  @IsEnum(StaffRole)
-  role: StaffRole;
-}
+// This file is deprecated. Use the individual DTO exports from ./index.ts instead.
+export { CreateStaffWithPinDto } from './index';
+export { CreateStaffWithPasswordDto } from './index';
+export { CreateStaffWithInviteDto } from './index';

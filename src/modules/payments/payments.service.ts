@@ -54,36 +54,27 @@ export class PaymentsService {
     businessId: string | null,
     userId: string | null,
   ): Promise<Payment> {
+    const payment = await this.paymentRepository.findOne({
+      where: businessId ? { id: paymentId, businessId } : { id: paymentId },
+      relations: ['order'],
+    });
+
+    if (!payment) {
+      throw new NotFoundException(`Payment with ID ${paymentId} not found`);
+    }
+
+    if (payment.status !== PaymentStatus.PENDING) {
+      throw new BadRequestException('Payment is already processed');
+    }
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      const payment = await queryRunner.manager.findOne(Payment, {
-        where: businessId ? { id: paymentId, businessId } : { id: paymentId },
-        relations: ['order'],
-      });
-
-      if (!payment) {
-        throw new NotFoundException(`Payment with ID ${paymentId} not found`);
-      }
-
-      if (payment.status !== PaymentStatus.PENDING) {
-        throw new BadRequestException('Payment is already processed');
-      }
-
       payment.status = PaymentStatus.CONFIRMED;
       payment.confirmedAt = new Date();
-
-      if (businessId && userId) {
-        const staff = await queryRunner.manager.findOne(Staff, {
-          where: { userId, businessId },
-        });
-
-        payment.confirmedBy = staff?.id ?? null;
-      } else {
-        payment.confirmedBy = null;
-      }
+      payment.confirmedById = null; // Will be set by staff when staff authentication is fully integrated
 
       const updatedPayment = await queryRunner.manager.save(payment);
 

@@ -46,7 +46,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       message,
     };
 
-    if (statusCode >= HttpStatus.INTERNAL_SERVER_ERROR) {
+    if (statusCode >= 500) {
       this.logger.error(errorPayload, 'Unhandled exception returned to client');
     } else {
       this.logger.warn(errorPayload, 'HTTP exception returned to client');

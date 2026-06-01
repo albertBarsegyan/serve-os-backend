@@ -31,18 +31,12 @@ export class Payment {
   @JoinColumn({ name: 'orderId' })
   order: Order;
 
-  @Column({
-    type: 'enum',
-    enum: PaymentMethod,
-    enumName: 'payment_method_enum',
-  })
+  @Column({ type: 'text' })
   method: PaymentMethod;
 
   @Column({
-    type: 'enum',
-    enum: PaymentStatus,
+    type: 'text',
     default: PaymentStatus.PENDING,
-    enumName: 'payment_status_enum',
   })
   status: PaymentStatus;
 
@@ -52,12 +46,12 @@ export class Payment {
   @Column({ type: 'timestamp', nullable: true })
   confirmedAt: Date;
 
-  @Column({ type: 'uuid', nullable: true })
-  confirmedBy: string | null; // staffId
+  @Column({ nullable: true })
+  confirmedById: string | null;
 
   @ManyToOne(() => Staff, (s) => s.confirmedPayments, { nullable: true })
-  @JoinColumn({ name: 'confirmedBy' })
-  confirmedByStaff: Staff;
+  @JoinColumn({ name: 'confirmedById' })
+  confirmedBy: Staff;
 
   @CreateDateColumn()
   createdAt: Date;

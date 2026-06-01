@@ -1,24 +1,25 @@
 import { Request } from 'express';
-import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
+import { BusinessFeature } from '@common/enums/business-feature.enum';
+import { AuthPayload } from '@modules/auth/types/auth-payload.type';
 
 export interface TenantBusinessContext {
   id: string;
-  role: StaffRole;
-  permissions: StaffRole[];
-}
-
-export interface AuthenticatedUser {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  hasBusiness: boolean;
-  role: Role;
+  role: StaffRole | null;
+  permissions: BusinessFeature[];
 }
 
 export interface AuthenticatedRequest extends Request {
-  user: AuthenticatedUser;
+  user?: AuthPayload;
+
+  authPayload?: AuthPayload;
+
+  ownerId?: string;
+  userEmail?: string;
+
+  staffId?: string;
   businessId?: string | null;
+  staffRole?: StaffRole | null;
+
   business?: TenantBusinessContext | null;
 }

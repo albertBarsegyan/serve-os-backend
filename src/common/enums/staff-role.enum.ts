@@ -1,6 +1,6 @@
 export enum StaffRole {
-  OWNER = 'OWNER',
-  ADMIN = 'ADMIN',
+  MANAGER = 'MANAGER',
   WAITER = 'WAITER',
-  CHEF = 'CHEF',
+  CASHIER = 'CASHIER',
+  KITCHEN = 'KITCHEN',
 }

@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Order, OrderStatus } from '@modules/orders/entities/order.entity';
+import { Order } from '@modules/orders/entities/order.entity';
+import { OrderStatus } from '@modules/orders/entities/order-status.enum';
 
 @Injectable()
 export class KitchenService {
@@ -13,12 +14,12 @@ export class KitchenService {
   async getActiveOrders(businessId: string) {
     const orders = await this.orderRepository.find({
       where: { businessId },
-      relations: ['items', 'items.product', 'table'],
+      relations: ['items', 'items.product', 'items.product.kitchenStation', 'table'],
       order: { createdAt: 'DESC' },
     });
 
     return orders.filter((order) =>
-      [OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.READY].includes(order.status),
+      [OrderStatus.CONFIRMED, OrderStatus.IN_KITCHEN, OrderStatus.READY].includes(order.status),
     );
   }
 }

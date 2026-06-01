@@ -4,23 +4,27 @@ import {
   Body,
   UseGuards,
   Get,
-  Request,
+  Req,
   Res,
   HttpCode,
   HttpStatus,
+  Delete,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { type Response, Request as ExpressRequest } from 'express';
+import { type Request as ExpressRequest, type Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
+import { BusinessService } from '@modules/business/business.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 import { Public } from '@common/decorators/public.decorator';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
-import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
-import { AuthUser } from '@common/decorators/auth-user.decorator';
-import type { AuthenticatedUser } from '@common/types/authenticated-request.type';
+import { UnifiedAuthGuard } from '@modules/auth/guards/unified-auth.guard';
+import { GetAuthPayload } from '@modules/auth/decorators/auth-payload.decorator';
+import type { AuthPayload } from '@modules/auth/types/auth-payload.type';
+import { clearBusinessCookie, setBusinessCookie } from '@common/utils/business.utils';
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -31,6 +35,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
+    private readonly businessService: BusinessService,
   ) {}
 
   private getCookieBase() {
@@ -103,7 +108,7 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Tokens refreshed' })
   @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
   async refresh(
-    @Request() req: ExpressRequest & { user: { sub: string; refreshToken: string } },
+    @Req() req: ExpressRequest & { user: { sub: string; refreshToken: string } },
     @Res({ passthrough: true }) res: Response,
   ) {
     const { tokens, user } = await this.authService.refreshTokens(
@@ -115,18 +120,26 @@ export class AuthController {
     return { user };
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(UnifiedAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @AllowWithoutBusiness()
   @ApiOperation({ summary: 'Logout and clear token cookies' })
   @ApiResponse({ status: 200, description: 'Logged out' })
   async logout(
-    @AuthUser() _authUser: AuthenticatedUser,
+    @GetAuthPayload() authPayload: AuthPayload,
     @Res({ passthrough: true }) res: Response,
   ) {
-    await this.authService.logout(_authUser.id);
+    // Extract the user ID based on payload type
+    const userId = authPayload.type === 'owner' ? authPayload.userId : null;
+    if (userId) {
+      await this.authService.logout(userId);
+    }
+
     this.clearTokenCookies(res);
+
+    clearBusinessCookie(res, this.configService.get<string>('NODE_ENV') === 'production');
+
     return { message: 'ok' };
   }
 
@@ -134,15 +147,50 @@ export class AuthController {
   @AllowWithoutBusiness()
   @ApiOperation({ summary: 'Get current authenticated user' })
   @ApiResponse({ status: 200, description: 'Current user info' })
-  me(
-    @Tenant(false) _businessId: null,
-    @Request()
-    req: ExpressRequest & {
-      user: {
-        id: string;
-      };
-    },
+  me(@Tenant(false) _businessId: null, @GetAuthPayload() authPayload: AuthPayload) {
+    if (authPayload.type !== 'owner') {
+      throw new ForbiddenException('Owner access required');
+    }
+
+    return this.authService.getMe(authPayload.userId);
+  }
+
+  @UseGuards(UnifiedAuthGuard)
+  @Post('business')
+  @HttpCode(HttpStatus.OK)
+  @AllowWithoutBusiness()
+  @ApiOperation({ summary: 'Select / switch active business' })
+  @ApiResponse({ status: 200, description: 'Business selected' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  async selectBusiness(
+    @GetAuthPayload() authPayload: AuthPayload,
+    @Body('businessId') businessId: string,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.getMe(req?.user?.id);
+    try {
+      await this.businessService.findOne(businessId, authPayload);
+    } catch {
+      throw new ForbiddenException('You do not have access to this business');
+    }
+
+    setBusinessCookie({
+      res,
+      businessId,
+      isProduction: this.configService.get<string>('NODE_ENV') === 'production',
+    });
+
+    return { message: 'ok' };
+  }
+
+  @UseGuards(UnifiedAuthGuard)
+  @Delete('business')
+  @HttpCode(HttpStatus.OK)
+  @AllowWithoutBusiness()
+  @ApiOperation({ summary: 'Clear selected business' })
+  @ApiResponse({ status: 200, description: 'Business cleared' })
+  clearBusiness(@Res({ passthrough: true }) res: Response) {
+    // Clear the cookie used for selected business
+    res.clearCookie('business_id');
+    return { message: 'ok' };
   }
 }

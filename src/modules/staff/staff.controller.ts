@@ -1,52 +1,218 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Delete,
+  ForbiddenException,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
+import type { Response } from 'express';
 import { StaffService } from './staff.service';
-import { CreateStaffDto } from './dto/create-staff.dto';
-import { Tenant } from '@common/decorators/tenant.decorator';
-import { TenantGuard } from '@common/guards/tenant.guard';
-import { Roles } from '@common/decorators/roles.decorator';
-import { Role } from '@common/enums/role.enum';
+import { AuthGuard } from '@nestjs/passport';
+import { BusinessOwnerGuard } from '@common/guards/business-owner.guard';
+import { Public } from '@common/decorators/public.decorator';
+import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
+import {
+  AcceptInviteDto,
+  ChangePasswordDto,
+  CreateStaffWithInviteDto,
+  CreateStaffWithPasswordDto,
+  CreateStaffWithPinDto,
+  LoginWithPasswordDto,
+  LoginWithPinDto,
+  UpdateStaffDto,
+} from './dto';
+
+interface StaffJwtRequest {
+  user: { staffId: string };
+}
+
+const STAFF_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 @ApiTags('Staff')
-@ApiBearerAuth()
-@Controller('staff')
-@UseGuards(TenantGuard)
-@Roles(Role.OWNER, Role.ADMIN)
+@Controller()
 export class StaffController {
-  constructor(private readonly staffService: StaffService) {}
+  constructor(
+    private readonly staffService: StaffService,
+    private readonly configService: ConfigService,
+  ) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Add a new staff member' })
-  @ApiResponse({ status: 201, description: 'Staff successfully added' })
-  create(@Tenant(true) businessId: string, @Body() dto: CreateStaffDto) {
-    return this.staffService.create(businessId, dto);
+  private setStaffCookie(res: Response, accessToken: string) {
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    res.cookie('staff_access_token', accessToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'strict',
+      path: '/',
+      maxAge: STAFF_TOKEN_TTL_MS,
+    });
   }
 
-  @Get()
-  @ApiOperation({ summary: 'Get all staff for the business' })
-  findAll(@Tenant(true) businessId: string) {
+  private clearStaffCookie(res: Response) {
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    res.clearCookie('staff_access_token', {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'strict',
+      path: '/',
+    });
+  }
+
+  // ── Creation (owner-only) ─────────────────────────────────────────────────
+
+  @Post('businesses/:businessId/staff/invite')
+  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create staff member and send invite email' })
+  @ApiResponse({ status: 201, description: 'Invite sent successfully' })
+  async createWithInvite(
+    @Param('businessId') businessId: string,
+    @Body() dto: CreateStaffWithInviteDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const createdByOwnerId = req.user?.type === 'owner' ? req.user.userId : undefined;
+    if (!createdByOwnerId) throw new ForbiddenException('Owner access required');
+    return this.staffService.createWithInvite(dto, createdByOwnerId, businessId);
+  }
+
+  @Post('businesses/:businessId/staff/pin')
+  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create staff member with PIN authentication' })
+  @ApiResponse({ status: 201, description: 'Staff created successfully' })
+  async createWithPin(
+    @Param('businessId') businessId: string,
+    @Body() dto: CreateStaffWithPinDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const createdByOwnerId = req.user?.type === 'owner' ? req.user.userId : undefined;
+    if (!createdByOwnerId) throw new ForbiddenException('Owner access required');
+    return this.staffService.createWithPin(dto, createdByOwnerId, businessId);
+  }
+
+  @Post('businesses/:businessId/staff/password')
+  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create staff member with password authentication' })
+  @ApiResponse({ status: 201, description: 'Staff created successfully' })
+  async createWithPassword(
+    @Param('businessId') businessId: string,
+    @Body() dto: CreateStaffWithPasswordDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const createdByOwnerId = req.user?.type === 'owner' ? req.user.userId : undefined;
+    if (!createdByOwnerId) throw new ForbiddenException('Owner access required');
+    return this.staffService.createWithPassword(dto, createdByOwnerId, businessId);
+  }
+
+  // ── Invite accept (public) ────────────────────────────────────────────────
+
+  @Public()
+  @Post('staff/accept-invite')
+  @ApiOperation({ summary: 'Accept staff invite and set password' })
+  @ApiResponse({ status: 200, description: 'Invite accepted successfully' })
+  async acceptInvite(@Body() dto: AcceptInviteDto) {
+    return this.staffService.acceptInvite(dto);
+  }
+
+  // ── Login (public) ────────────────────────────────────────────────────────
+
+  @Public()
+  @Post('businesses/:businessId/staff/login/pin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Staff login with PIN' })
+  @ApiResponse({ status: 200, description: 'Login successful' })
+  async loginWithPin(
+    @Param('businessId') businessId: string,
+    @Body() dto: LoginWithPinDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.staffService.loginWithPin(businessId, dto.staffId, dto.pin);
+    this.setStaffCookie(res, result.accessToken);
+    return result;
+  }
+
+  @Public()
+  @Post('businesses/:businessId/staff/login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Staff login with email and password' })
+  @ApiResponse({ status: 200, description: 'Login successful or password change required' })
+  async loginWithPassword(
+    @Param('businessId') businessId: string,
+    @Body() dto: LoginWithPasswordDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.staffService.loginWithPassword(dto.email, dto.password, businessId);
+    if (result.accessToken) {
+      this.setStaffCookie(res, result.accessToken);
+    }
+    return result;
+  }
+
+  @Post('businesses/:businessId/staff/logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Staff logout — clears staff_access_token cookie' })
+  logout(@Param('businessId') _businessId: string, @Res({ passthrough: true }) res: Response) {
+    this.clearStaffCookie(res);
+    return { message: 'ok' };
+  }
+
+  // ── Password change (staff JWT) ───────────────────────────────────────────
+
+  @Post('staff/change-password')
+  @UseGuards(AuthGuard('staff-jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Change staff password' })
+  @ApiResponse({ status: 200, description: 'Password changed successfully' })
+  async changePassword(@Req() req: StaffJwtRequest, @Body() dto: ChangePasswordDto) {
+    return this.staffService.changePassword(req.user.staffId, dto);
+  }
+
+  // ── CRUD (owner-only) ─────────────────────────────────────────────────────
+
+  @Get('businesses/:businessId/staff')
+  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all staff for a business' })
+  async findAll(@Param('businessId') businessId: string) {
     return this.staffService.findAll(businessId);
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get a staff member by ID' })
-  findOne(@Tenant(true) businessId: string, @Param('id') id: string) {
-    return this.staffService.findOne(businessId, id);
+  @Get('businesses/:businessId/staff/:staffId')
+  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get a specific staff member' })
+  async findOne(@Param('businessId') businessId: string, @Param('staffId') staffId: string) {
+    return this.staffService.findOne(staffId, businessId);
   }
 
-  @Patch(':id')
-  @ApiOperation({ summary: 'Update staff member details' })
-  update(
-    @Tenant(true) businessId: string,
-    @Param('id') id: string,
-    @Body() dto: Partial<CreateStaffDto>,
+  @Patch('businesses/:businessId/staff/:staffId')
+  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update staff details' })
+  async update(
+    @Param('businessId') businessId: string,
+    @Param('staffId') staffId: string,
+    @Body() dto: UpdateStaffDto,
   ) {
-    return this.staffService.update(businessId, id, dto);
+    return this.staffService.update(staffId, businessId, dto);
   }
 
-  @Delete(':id')
-  @ApiOperation({ summary: 'Remove a staff member' })
-  remove(@Tenant(true) businessId: string, @Param('id') id: string) {
-    return this.staffService.remove(businessId, id);
+  @Delete('businesses/:businessId/staff/:staffId')
+  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete a staff member' })
+  async remove(@Param('businessId') businessId: string, @Param('staffId') staffId: string) {
+    await this.staffService.remove(staffId, businessId);
+    return { success: true };
   }
 }

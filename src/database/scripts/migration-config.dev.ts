@@ -12,7 +12,7 @@ export const AppDataSourceDev = new DataSource({
   username: process.env.MIGRATION_POSTGRES_USER || process.env.POSTGRES_USER,
   password: process.env.MIGRATION_POSTGRES_PASSWORD || process.env.POSTGRES_PASSWORD,
   database: process.env.MIGRATION_POSTGRES_DB || process.env.POSTGRES_DB,
-  entities: ['src/modules/**/entities/*.entity{.ts,.js}'],
+  entities: ['src/**/*.entity{.ts,.js}'],
   migrations: ['src/database/migrations/*{.ts,.js}', 'src/database/migrations/*.sql'],
   migrationsTableName: 'migrations',
   synchronize: false,

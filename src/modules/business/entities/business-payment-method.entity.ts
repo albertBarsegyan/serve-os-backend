@@ -6,6 +6,8 @@ import {
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
+  Index,
   Unique,
 } from 'typeorm';
 import { Business } from './business.entity';
@@ -24,7 +26,7 @@ export class BusinessPaymentMethod {
   @JoinColumn({ name: 'businessId' })
   business: Business;
 
-  @Column({ type: 'enum', enum: PaymentMethod, enumName: 'business_payment_method_enum' })
+  @Column({ type: 'text' })
   method: PaymentMethod;
 
   @Column({ default: true })
@@ -38,4 +40,8 @@ export class BusinessPaymentMethod {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @DeleteDateColumn()
+  @Index()
+  deletedAt: Date | null;
 }

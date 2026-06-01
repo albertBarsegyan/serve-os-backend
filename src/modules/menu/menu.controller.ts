@@ -6,12 +6,13 @@ import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { Roles } from '@common/decorators/roles.decorator';
 import { Role } from '@common/enums/role.enum';
+import { StaffRole } from '@common/enums/staff-role.enum';
 
 @ApiTags('Menu')
 @ApiBearerAuth()
 @Controller('menu')
 @UseGuards(TenantGuard)
-@Roles(Role.OWNER, Role.ADMIN)
+@Roles(Role.OWNER, StaffRole.MANAGER)
 export class MenuController {
   constructor(private readonly menuService: MenuService) {}
 

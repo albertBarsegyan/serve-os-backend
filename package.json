@@ -21,6 +21,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "docker:dev": "export DOCKER_API_VERSION=1.41; docker compose --env-file .env.development -f docker-compose.dev.yml up --build",
+    "docker:dev:sync": "docker compose -f docker-compose.dev.yml rm -sf app && docker compose --env-file .env.development -f docker-compose.dev.yml up --build app",
     "docker:dev:stop": "docker compose -f docker-compose.dev.yml stop",
     "docker:dev:restart": "docker compose -f docker-compose.dev.yml restart",
     "docker:dev:down": "docker compose -f docker-compose.dev.yml down",
@@ -61,7 +62,8 @@
     "rxjs": "^7.8.1",
     "swagger-ui-express": "^5.0.1",
     "typeorm": "^0.3.28",
-    "uuid": "^14.0.0"
+    "uuid": "^14.0.0",
+    "slugify": "^1.6.6"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

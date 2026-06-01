@@ -4,15 +4,21 @@ import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { User } from '@modules/users/entities/user.entity';
+import { BusinessModule } from '@modules/business/business.module';
 import { Staff } from '@modules/staff/entities/staff.entity';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
+import { StaffJwtStrategy } from './strategies/staff-jwt.strategy';
+import { UnifiedAuthGuard } from './guards/unified-auth.guard';
+import { OwnerOnlyGuard } from './guards/owner-only.guard';
+import { StaffOnlyGuard } from './guards/staff-only.guard';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Staff]),
+    BusinessModule,
     PassportModule.register({
       defaultStrategy: 'jwt',
     }),
@@ -25,8 +31,16 @@ import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
     }),
     ConfigModule,
   ],
-  providers: [AuthService, JwtStrategy, JwtRefreshStrategy],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtRefreshStrategy,
+    StaffJwtStrategy,
+    UnifiedAuthGuard,
+    OwnerOnlyGuard,
+    StaffOnlyGuard,
+  ],
   controllers: [AuthController],
-  exports: [AuthService],
+  exports: [AuthService, UnifiedAuthGuard, OwnerOnlyGuard, StaffOnlyGuard],
 })
 export class AuthModule {}

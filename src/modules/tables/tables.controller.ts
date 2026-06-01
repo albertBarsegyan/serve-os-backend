@@ -4,8 +4,8 @@ import { TablesService } from './tables.service';
 import { CreateTableDto } from './dto/create-table.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
-import { FeatureGuard } from '@common/guards/feature.guard';
-import { RequireBusinessFeature } from '@common/decorators/require-feature.decorator';
+import { PermissionGuard } from '@common/guards/permission.guard';
+import { RequirePermission } from '@common/decorators/require-permission.decorator';
 import { Public } from '@common/decorators/public.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
@@ -14,12 +14,12 @@ import { Role } from '@common/enums/role.enum';
 @ApiTags('Tables')
 @ApiBearerAuth()
 @Controller('tables')
-@UseGuards(TenantGuard, FeatureGuard)
-@RequireBusinessFeature(BusinessFeature.TABLES)
+@UseGuards(TenantGuard, PermissionGuard)
 export class TablesController {
   constructor(private readonly tablesService: TablesService) {}
 
   @Roles(Role.OWNER, Role.ADMIN)
+  @RequirePermission(BusinessFeature.TABLES, 'create')
   @Post()
   @ApiOperation({ summary: 'Create a new table' })
   @ApiResponse({ status: 201, description: 'Table successfully created' })
@@ -28,6 +28,7 @@ export class TablesController {
   }
 
   @Roles(Role.OWNER, Role.ADMIN)
+  @RequirePermission(BusinessFeature.TABLES, 'read')
   @Get()
   @ApiOperation({ summary: 'Get all tables for the business' })
   findAll(@Tenant(true) businessId: string) {
@@ -44,6 +45,7 @@ export class TablesController {
   }
 
   @Roles(Role.OWNER, Role.ADMIN)
+  @RequirePermission(BusinessFeature.TABLES, 'read')
   @Get(':id')
   @ApiOperation({ summary: 'Get a table by ID' })
   findOne(@Tenant(true) businessId: string, @Param('id') id: string) {
@@ -51,6 +53,7 @@ export class TablesController {
   }
 
   @Roles(Role.OWNER, Role.ADMIN)
+  @RequirePermission(BusinessFeature.TABLES, 'update')
   @Patch(':id')
   @ApiOperation({ summary: 'Update a table' })
   update(
@@ -62,6 +65,7 @@ export class TablesController {
   }
 
   @Roles(Role.OWNER, Role.ADMIN)
+  @RequirePermission(BusinessFeature.TABLES, 'delete')
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a table' })
   remove(@Tenant(true) businessId: string, @Param('id') id: string) {

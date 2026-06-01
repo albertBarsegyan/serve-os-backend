@@ -8,7 +8,7 @@ export const AppDataSourceProd = new DataSource({
   password: process.env.POSTGRES_PASSWORD,
   database: process.env.POSTGRES_DB,
   migrations: ['dist/database/migrations/*.js', 'src/database/migrations/*.sql'],
-  entities: ['dist/modules/**/entities/*.entity.js'],
+  entities: ['dist/**/*.entity.js'],
   migrationsTableName: 'migrations',
   synchronize: false,
   logging: false,

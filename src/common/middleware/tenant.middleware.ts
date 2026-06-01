@@ -5,11 +5,18 @@ import { NextFunction, Request, Response } from 'express';
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
   use(req: Request & { businessId?: string | null }, _res: Response, next: NextFunction) {
-    const rawBusinessId = req.headers['x-business-id'];
-    const businessId = Array.isArray(rawBusinessId) ? rawBusinessId[0] : rawBusinessId;
+    // Read business selection from cookie if present. This cookie is set by the auth
+    // controller when a user selects/switches businesses in the frontend.
+    const cookies = (req as Request & { cookies?: Record<string, string> }).cookies;
+    const rawBusinessId =
+      cookies && typeof cookies['business_id'] === 'string' ? cookies['business_id'] : undefined;
 
-    if (typeof businessId === 'string' && businessId.trim().length > 0 && isUuid(businessId)) {
-      req.businessId = businessId;
+    if (
+      typeof rawBusinessId === 'string' &&
+      rawBusinessId.trim().length > 0 &&
+      isUuid(rawBusinessId)
+    ) {
+      req.businessId = rawBusinessId;
     } else {
       req.businessId = null;
     }

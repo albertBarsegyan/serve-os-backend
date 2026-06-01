@@ -10,7 +10,7 @@ import {
 } from 'typeorm';
 import { Business } from '@modules/business/entities/business.entity';
 import { MenuCategory } from '@modules/menu/entities/category.entity';
-import { OrderItem } from '@modules/orders/entities/order-item.entity';
+import { Product } from '@modules/menu/entities/product.entity';
 
 @Entity('kitchen_stations')
 export class KitchenStation {
@@ -39,6 +39,6 @@ export class KitchenStation {
   @OneToMany(() => MenuCategory, (c) => c.kitchenStation)
   menuCategories: MenuCategory[];
 
-  @OneToMany(() => OrderItem, (i) => i.kitchenStation)
-  orderItems: OrderItem[];
+  @OneToMany(() => Product, (p) => p.kitchenStation)
+  products: Product[];
 }

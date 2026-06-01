@@ -7,9 +7,12 @@ import {
   OneToMany,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
+  Index,
 } from 'typeorm';
 import { Business } from '@modules/business/entities/business.entity';
 import { Order } from '@modules/orders/entities/order.entity';
+import { TableSession } from '@modules/table-sessions/table-session.entity';
 
 @Entity('tables')
 export class Table {
@@ -35,6 +38,10 @@ export class Table {
   @Column({ default: true })
   isActive: boolean;
 
+  @DeleteDateColumn()
+  @Index()
+  deletedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 
@@ -43,4 +50,7 @@ export class Table {
 
   @OneToMany(() => Order, (o) => o.table)
   orders: Order[];
+
+  @OneToMany(() => TableSession, (s) => s.table)
+  tableSessions: TableSession[];
 }

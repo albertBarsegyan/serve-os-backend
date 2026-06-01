@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Business } from './entities/business.entity';
@@ -7,7 +7,8 @@ import { FEATURE_PRESETS } from '@common/constants/feature-presets';
 import { BusinessType } from '@common/enums/business-type.enum';
 import { stringToCommaSeparated } from '@common/utils/string.utils';
 import { User } from '@modules/users/entities/user.entity';
-import { AuthenticatedUser } from '@common/types/authenticated-request.type';
+import { AuthPayload } from '@modules/auth/types/auth-payload.type';
+import { updateFeatures } from '@common/utils/business-feature.utils';
 
 @Injectable()
 export class BusinessService {
@@ -26,16 +27,18 @@ export class BusinessService {
    * If features are not explicitly provided, defaults from FEATURE_PRESETS are used.
    */
 
-  async create(
-    createBusinessDto: CreateBusinessDto,
-    authUser: AuthenticatedUser,
-  ): Promise<Business> {
+  async create(createBusinessDto: CreateBusinessDto, payload: AuthPayload): Promise<Business> {
+    if (payload.type !== 'owner') {
+      throw new ForbiddenException('Only owners can create businesses');
+    }
+
     return this.dataSource.transaction(async (manager) => {
       const type = createBusinessDto.type ?? BusinessType.RESTAURANT;
+      const presetFeatures = FEATURE_PRESETS[type] ?? [];
 
       const features = createBusinessDto.features?.length
-        ? createBusinessDto.features
-        : (FEATURE_PRESETS[type] ?? []);
+        ? updateFeatures({ features: presetFeatures }, createBusinessDto.features)
+        : presetFeatures;
 
       const slug = stringToCommaSeparated(createBusinessDto.name);
 
@@ -47,62 +50,120 @@ export class BusinessService {
         slug,
         type,
         features,
-        ownerId: authUser.id,
+        ownerId: payload.userId,
       });
 
       const savedBusiness = await businessRepository.save(business);
 
-      if (!authUser.hasBusiness)
-        await userRepository.update(authUser.id, {
-          hasBusiness: true,
-        });
+      const owner = await userRepository.findOne({ where: { id: payload.userId } });
+      if (owner && !owner.hasBusiness) {
+        await userRepository.update(payload.userId, { hasBusiness: true });
+      }
 
       return savedBusiness;
     });
   }
 
-  async findAll(userId: string): Promise<Business[]> {
+  async findAll(payload: AuthPayload): Promise<Business[]> {
+    if (payload.type === 'owner') {
+      return this.businessRepository
+        .createQueryBuilder('business')
+        .where('business.ownerId = :ownerId', { ownerId: payload.userId })
+        .getMany();
+    }
+
     return this.businessRepository
       .createQueryBuilder('business')
-      .leftJoin('business.staff', 'staff')
-      .where('business.ownerId = :userId OR staff.userId = :userId', { userId })
-      .groupBy('business.id')
+      .where('business.id = :businessId', { businessId: payload.businessId })
       .getMany();
   }
 
-  async findOne(id: string, userId: string): Promise<Business> {
-    const business = await this.businessRepository
-      .createQueryBuilder('business')
-      .leftJoin('business.staff', 'staff')
-      .where('business.id = :id', { id })
-      .andWhere('(business.ownerId = :userId OR staff.userId = :userId)', { userId })
-      .getOne();
+  async findOne(id: string, payload: AuthPayload): Promise<Business> {
+    if (payload.type === 'owner') {
+      const business = await this.businessRepository.findOne({
+        where: { id, ownerId: payload.userId },
+      });
+
+      if (!business) {
+        throw new NotFoundException(`Business with ID ${id} not found`);
+      }
+
+      return business;
+    }
+
+    const business = await this.businessRepository.findOne({ where: { id } });
 
     if (!business) {
       throw new NotFoundException(`Business with ID ${id} not found`);
     }
+
+    if (payload.businessId !== id) {
+      throw new ForbiddenException('You do not have access to this business');
+    }
+
     return business;
   }
 
   async update(
     id: string,
-    userId: string,
+    payload: AuthPayload,
     updateBusinessDto: UpdateBusinessDto,
   ): Promise<Business> {
-    const ownedBusiness = await this.businessRepository.findOne({ where: { id, ownerId: userId } });
+    // Only owners can update businesses
+    if (payload.type !== 'owner') {
+      throw new ForbiddenException('Only owners can update businesses');
+    }
+
+    const ownedBusiness = await this.businessRepository.findOne({
+      where: { id, ownerId: payload.userId },
+    });
 
     if (!ownedBusiness) {
       throw new NotFoundException(`Business with ID ${id} not found`);
     }
 
-    await this.businessRepository.update({ id, ownerId: userId }, updateBusinessDto);
-    return this.findOne(id, userId);
+    const nextType = updateBusinessDto.type ?? ownedBusiness.type;
+    const updatePayload: UpdateBusinessDto = { ...updateBusinessDto };
+
+    if (updateBusinessDto.features) {
+      updatePayload.features = updateFeatures(
+        {
+          features: updateBusinessDto.type
+            ? (FEATURE_PRESETS[nextType] ?? [])
+            : ownedBusiness.features,
+        },
+        updateBusinessDto.features,
+      );
+    }
+
+    await this.businessRepository.update({ id, ownerId: payload.userId }, updatePayload);
+    return this.findOne(id, payload);
   }
 
-  async remove(id: string, userId: string): Promise<void> {
-    const result = await this.businessRepository.delete({ id, ownerId: userId });
+  async remove(id: string, payload: AuthPayload): Promise<void> {
+    // Only owners can delete businesses
+    if (payload.type !== 'owner') {
+      throw new ForbiddenException('Only owners can delete businesses');
+    }
+
+    const result = await this.businessRepository.delete({
+      id,
+      ownerId: payload.userId,
+    });
+
     if (result.affected === 0) {
       throw new NotFoundException(`Business with ID ${id} not found`);
+    }
+
+    // Check if user still has businesses
+    const remainingBusinesses = await this.businessRepository.count({
+      where: {
+        ownerId: payload.userId,
+      },
+    });
+
+    if (remainingBusinesses === 0) {
+      await this.userRepository.update({ id: payload.userId }, { hasBusiness: false });
     }
   }
 }

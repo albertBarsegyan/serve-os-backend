@@ -1,4 +1,13 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+  DeleteDateColumn,
+  Index,
+} from 'typeorm';
 import { Business } from '@modules/business/entities/business.entity';
 import { Product } from './product.entity';
 import { KitchenStation } from '@modules/kitchen/entities/kitchen-station.entity';
@@ -31,6 +40,10 @@ export class MenuCategory {
 
   @Column({ default: true })
   isActive: boolean;
+
+  @DeleteDateColumn()
+  @Index()
+  deletedAt: Date | null;
 
   @OneToMany(() => Product, (product) => product.category)
   products: Product[];

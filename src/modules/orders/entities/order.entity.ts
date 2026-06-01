@@ -7,28 +7,29 @@ import {
   OneToMany,
   CreateDateColumn,
   UpdateDateColumn,
+  BeforeInsert,
+  BeforeUpdate,
+  Check,
 } from 'typeorm';
+import { BadRequestException } from '@nestjs/common';
 import { Business } from '@modules/business/entities/business.entity';
 import { Table } from '@modules/tables/entities/table.entity';
 import { OrderItem } from './order-item.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
 import { Payment } from '@modules/payments/entities/payment.entity';
-import { CustomerSession } from '@modules/customer-session/entities/customer-session.entity';
-import { PaymentMethod, OrderPaymentStatus } from '@common/enums/payment.enum';
-
-export enum OrderStatus {
-  PENDING = 'PENDING',
-  CONFIRMED = 'CONFIRMED',
-  PREPARING = 'PREPARING',
-  READY = 'READY',
-  DELIVERED = 'DELIVERED',
-  CLOSED = 'CLOSED',
-  CANCELLED = 'CANCELLED',
-}
+import { OrderPaymentStatus } from '@common/enums/payment.enum';
+import { OrderStatus } from './order-status.enum';
+import { OrderType } from './order-type.enum';
+import { TableSession } from '@modules/table-sessions/table-session.entity';
 
 // payment enums moved to common enums to avoid duplication and import cycles
 
 @Entity('orders')
+@Check(
+  `(("type" = 'DINE_IN' AND "tableId" IS NOT NULL AND "tableSessionId" IS NOT NULL) OR
+    ("type" = 'TAKEAWAY' AND "tableId" IS NULL AND "tableSessionId" IS NULL) OR
+    ("type" NOT IN ('DINE_IN', 'TAKEAWAY')))`,
+)
 export class Order {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -40,36 +41,32 @@ export class Order {
   @JoinColumn({ name: 'businessId' })
   business: Business;
 
-  @Column()
-  tableId: string;
+  // Nullable because TAKEAWAY orders do not belong to a table/session pair;
+  // DINE_IN orders must populate both fields and the entity listener enforces that.
+  @Column({ nullable: true })
+  tableId: string | null;
 
-  @ManyToOne(() => Table)
+  @ManyToOne(() => Table, { nullable: true })
   @JoinColumn({ name: 'tableId' })
-  table: Table;
+  table: Table | null;
 
   @Column({ nullable: true })
-  waiterId: string;
+  waiterId: string | null;
 
   @Column({
-    type: 'enum',
-    enum: OrderStatus,
-    default: OrderStatus.PENDING,
-    enumName: 'order_status_enum',
+    type: 'text',
+    default: OrderType.DINE_IN,
+  })
+  type: OrderType;
+
+  @Column({
+    type: 'text',
+    default: OrderStatus.CREATED,
   })
   status: OrderStatus;
 
   @Column({
-    type: 'enum',
-    enum: PaymentMethod,
-    enumName: 'order_payment_method_enum',
-    nullable: true,
-  })
-  paymentMethod: PaymentMethod;
-
-  @Column({
-    type: 'enum',
-    enum: OrderPaymentStatus,
-    enumName: 'order_payment_status_enum',
+    type: 'text',
     default: OrderPaymentStatus.UNPAID,
   })
   paymentStatus: OrderPaymentStatus;
@@ -77,16 +74,24 @@ export class Order {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   totalAmount: number;
 
+  // Nullable because only DINE_IN orders reference a table session; TAKEAWAY and other
+  // non-table orders intentionally keep this column empty.
   @Column({ nullable: true })
-  customerSessionId: string;
+  tableSessionId: string | null;
 
-  @ManyToOne(() => CustomerSession, (s) => s.orders, { nullable: true })
-  @JoinColumn({ name: 'customerSessionId' })
-  customerSession: CustomerSession;
+  @ManyToOne(() => TableSession, (s) => s.orders, { nullable: true })
+  @JoinColumn({ name: 'tableSessionId' })
+  tableSession: TableSession | null;
+
+  @Column({ nullable: true, type: 'text' })
+  externalOrderId: string | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  tipAmount: number;
 
   @ManyToOne(() => Staff, (s) => s.servedOrders, { nullable: true })
   @JoinColumn({ name: 'waiterId' })
-  waiter: Staff;
+  waiter: Staff | null;
 
   @OneToMany(() => OrderItem, (item) => item.order, { cascade: ['insert', 'update'] })
   items: OrderItem[];
@@ -99,4 +104,19 @@ export class Order {
 
   @OneToMany(() => Payment, (p) => p.order)
   payments: Payment[];
+
+  @BeforeInsert()
+  @BeforeUpdate()
+  validateTableAssignment(): void {
+    const hasTableContext = this.tableId !== null && this.tableSessionId !== null;
+    const lacksTableContext = this.tableId === null && this.tableSessionId === null;
+
+    if (this.type === OrderType.DINE_IN && !hasTableContext) {
+      throw new BadRequestException('DINE_IN orders must have both tableId and tableSessionId set');
+    }
+
+    if (this.type === OrderType.TAKEAWAY && !lacksTableContext) {
+      throw new BadRequestException('TAKEAWAY orders must not have tableId or tableSessionId set');
+    }
+  }
 }

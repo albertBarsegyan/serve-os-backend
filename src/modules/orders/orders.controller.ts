@@ -1,7 +1,18 @@
-import { Controller, Get, Post, Body, Patch, Param, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  UseGuards,
+  Headers,
+  ParseUUIDPipe,
+  Req,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
-import { CreateOrderDto, UpdateOrderStatusDto } from './dto/orders.dto';
+import { UpdateOrderStatusDto } from './dto/orders.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { FeatureGuard } from '@common/guards/feature.guard';
@@ -10,6 +21,11 @@ import { Public } from '@common/decorators/public.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
 import { Role } from '@common/enums/role.enum';
+import { StaffRole } from '@common/enums/staff-role.enum';
+import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
+import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
+import { ProcessPaymentDto } from './dto/process-payment.dto';
+import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 
 @ApiTags('Orders')
 @ApiBearerAuth()
@@ -19,19 +35,23 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Public()
+  @AllowWithoutBusiness()
   @Post()
-  @ApiOperation({ summary: 'Place a new order (Guest or Staff)' })
+  @ApiOperation({ summary: 'Place a new QR order using session token' })
   @ApiResponse({ status: 201, description: 'Order successfully placed' })
-  create(@Tenant(true) businessId: string, @Body() dto: CreateOrderDto) {
-    return this.ordersService.create(businessId, dto);
+  createFromQr(
+    @Body() dto: CreateOrderFromQrDto,
+    @Headers('x-session-token') headerSessionToken?: string,
+  ) {
+    return this.ordersService.createFromQr(dto, headerSessionToken);
   }
 
   @RequireBusinessFeature(
-    BusinessFeature.DINE_IN,
-    BusinessFeature.TAKEAWAY,
-    BusinessFeature.DELIVERY,
+    BusinessFeature.ORDER_DINE_IN,
+    BusinessFeature.ORDER_TAKEAWAY,
+    BusinessFeature.ORDER_DELIVERY,
   )
-  @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Get()
   @ApiOperation({ summary: 'Get all orders for the business' })
   findAll(@Tenant(true) businessId: string) {
@@ -39,11 +59,11 @@ export class OrdersController {
   }
 
   @RequireBusinessFeature(
-    BusinessFeature.DINE_IN,
-    BusinessFeature.TAKEAWAY,
-    BusinessFeature.DELIVERY,
+    BusinessFeature.ORDER_DINE_IN,
+    BusinessFeature.ORDER_TAKEAWAY,
+    BusinessFeature.ORDER_DELIVERY,
   )
-  @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Get(':id')
   @ApiOperation({ summary: 'Get an order by ID' })
   findOne(@Tenant(true) businessId: string, @Param('id') id: string) {
@@ -51,11 +71,11 @@ export class OrdersController {
   }
 
   @RequireBusinessFeature(
-    BusinessFeature.DINE_IN,
-    BusinessFeature.TAKEAWAY,
-    BusinessFeature.DELIVERY,
+    BusinessFeature.ORDER_DINE_IN,
+    BusinessFeature.ORDER_TAKEAWAY,
+    BusinessFeature.ORDER_DELIVERY,
   )
-  @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Patch(':id/status')
   @ApiOperation({ summary: 'Update order status' })
   @ApiResponse({ status: 200, description: 'Status updated' })
@@ -64,7 +84,28 @@ export class OrdersController {
     @Tenant(true) businessId: string,
     @Param('id') id: string,
     @Body() dto: UpdateOrderStatusDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.ordersService.updateStatus(businessId, id, dto);
+    return this.ordersService.updateStatus(businessId, id, dto, req.business?.role);
+  }
+
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
+  @Post(':id/payment/cash')
+  processCashPayment(
+    @Tenant(true) businessId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ProcessPaymentDto,
+  ) {
+    return this.ordersService.processCashPayment(businessId, id, dto);
+  }
+
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
+  @Post(':id/payment/pos')
+  processPosPayment(
+    @Tenant(true) businessId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ProcessPaymentDto,
+  ) {
+    return this.ordersService.processPosPayment(businessId, id, dto);
   }
 }

@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { MenuCategory } from './entities/category.entity';
 import { Product } from './entities/product.entity';
 import { CreateCategoryDto, CreateProductDto } from './dto/menu.dto';
+import slugify from 'slugify';
 
 @Injectable()
 export class MenuService {
@@ -14,7 +15,6 @@ export class MenuService {
     private readonly productRepository: Repository<Product>,
   ) {}
 
-  // Category CRUD
   async createCategory(businessId: string, dto: CreateCategoryDto): Promise<MenuCategory> {
     const category = this.categoryRepository.create({ ...dto, businessId });
     return this.categoryRepository.save(category);
@@ -24,7 +24,7 @@ export class MenuService {
     return this.categoryRepository.find({
       where: { businessId },
       order: { sortOrder: 'ASC' },
-      relations: ['products'],
+      relations: ['products', 'products.kitchenStation'],
     });
   }
 
@@ -40,21 +40,61 @@ export class MenuService {
 
   async createProduct(businessId: string, dto: CreateProductDto): Promise<Product> {
     const category = await this.findCategory(businessId, dto.categoryId);
-    const product = this.productRepository.create({ ...dto, businessId });
+    // Prepare slug: if not provided, generate from name and ensure uniqueness scoped to businessId
+    let slug = dto.slug?.trim();
+    if (!slug) {
+      const base = slugify(dto.name, { lower: true, strict: true });
+      let candidate = base;
+      let idx = 2;
+      // check uniqueness scoped to businessId
+
+      while (true) {
+        const exists = await this.productRepository.findOne({
+          where: { businessId, slug: candidate },
+        });
+        if (!exists) {
+          slug = candidate;
+          break;
+        }
+        candidate = `${base}-${idx++}`;
+      }
+    }
+
+    // Build explicit partial Product to avoid accidental mapping of DTO-only fields
+    const productData: Partial<Product> = {
+      businessId,
+      categoryId: dto.categoryId,
+      name: dto.name,
+      description: dto.description ?? undefined,
+      price: dto.basePrice,
+      compareAtPrice: dto.compareAtPrice ?? null,
+      slug,
+      sku: dto.sku ?? null,
+      prepTimeMinutes: dto.prepTimeMinutes ?? undefined,
+      availablePeriod: dto.availablePeriod ?? undefined,
+      sortOrder: dto.sortOrder ?? undefined,
+      isFeatured: dto.isFeatured ?? undefined,
+      dietaryFlags: dto.dietaryFlags ? dto.dietaryFlags.map(String) : undefined,
+      allergens: dto.allergens ? dto.allergens.map(String) : undefined,
+      imageUrls: dto.imageUrls ?? undefined,
+      kitchenStationId: category.kitchenStationId ?? null,
+    };
+
+    const product = this.productRepository.create(productData);
     return this.productRepository.save(product);
   }
 
   async findAllProducts(businessId: string): Promise<Product[]> {
     return this.productRepository.find({
       where: { businessId },
-      relations: ['category'],
+      relations: ['category', 'kitchenStation'],
     });
   }
 
   async findProduct(businessId: string, id: string): Promise<Product> {
     const product = await this.productRepository.findOne({
       where: { id, businessId },
-      relations: ['category'],
+      relations: ['category', 'kitchenStation'],
     });
     if (!product) {
       throw new NotFoundException(`Product with ID ${id} not found`);
@@ -67,16 +107,38 @@ export class MenuService {
     id: string,
     dto: Partial<CreateProductDto>,
   ): Promise<Product> {
-    const product = await this.findProduct(businessId, id);
+    await this.findProduct(businessId, id);
+    const updateData: Partial<Product> = {};
+
+    // Only copy allowed fields from DTO to updateData to avoid DTO-specific properties
+    if (dto.name !== undefined) updateData.name = dto.name;
+    if (dto.description !== undefined) updateData.description = dto.description;
+    if ((dto as CreateProductDto).basePrice !== undefined)
+      updateData.price = (dto as CreateProductDto).basePrice;
+    if ((dto as CreateProductDto).compareAtPrice !== undefined)
+      updateData.compareAtPrice = (dto as CreateProductDto).compareAtPrice ?? null;
+    if (dto.slug !== undefined) updateData.slug = dto.slug;
+    if (dto.sku !== undefined) updateData.sku = dto.sku ?? null;
+    if (dto.prepTimeMinutes !== undefined) updateData.prepTimeMinutes = dto.prepTimeMinutes;
+    if (dto.availablePeriod !== undefined) updateData.availablePeriod = dto.availablePeriod;
+    if (dto.sortOrder !== undefined) updateData.sortOrder = dto.sortOrder;
+    if (dto.isFeatured !== undefined) updateData.isFeatured = dto.isFeatured;
+    if (dto.dietaryFlags !== undefined) updateData.dietaryFlags = dto.dietaryFlags.map(String);
+    if (dto.allergens !== undefined) updateData.allergens = dto.allergens.map(String);
+    if (dto.imageUrls !== undefined) updateData.imageUrls = dto.imageUrls;
+
     if (dto.categoryId) {
-      await this.findCategory(businessId, dto.categoryId);
+      const category = await this.findCategory(businessId, dto.categoryId);
+      updateData.categoryId = dto.categoryId;
+      updateData.kitchenStationId = category.kitchenStationId ?? null;
     }
-    await this.productRepository.update({ id, businessId }, dto);
+
+    await this.productRepository.update({ id, businessId }, updateData);
     return this.findProduct(businessId, id);
   }
 
   async removeProduct(businessId: string, id: string): Promise<void> {
-    const result = await this.productRepository.delete({ id, businessId });
+    const result = await this.productRepository.softDelete({ id, businessId });
     if (result.affected === 0) {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }

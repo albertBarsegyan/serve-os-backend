@@ -20,6 +20,7 @@ import { Order } from '@modules/orders/entities/order.entity';
 import { Payment } from '@modules/payments/entities/payment.entity';
 import { KitchenStation } from '@modules/kitchen/entities/kitchen-station.entity';
 import { BusinessPaymentMethod } from '@modules/business/entities/business-payment-method.entity';
+import { TableSession } from '@modules/table-sessions/table-session.entity';
 
 @Entity('businesses')
 @Index('IDX_business_slug', ['slug'])
@@ -34,17 +35,13 @@ export class Business {
   slug: string;
 
   @Column({
-    type: 'enum',
-    enum: BusinessType,
-    enumName: 'business_type_enum',
+    type: 'text',
     default: BusinessType.RESTAURANT,
   })
   type: BusinessType;
 
   @Column({
-    type: 'enum',
-    enum: BusinessFeature,
-    enumName: 'businesses_features_enum',
+    type: 'text',
     array: true,
     nullable: false,
     default: [],
@@ -99,4 +96,7 @@ export class Business {
 
   @OneToMany(() => BusinessPaymentMethod, (pm) => pm.business)
   paymentMethods: BusinessPaymentMethod[];
+
+  @OneToMany(() => TableSession, (s) => s.business)
+  tableSessions: TableSession[];
 }

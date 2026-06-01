@@ -30,7 +30,6 @@ services:
       - .env.development
     volumes:
       - .:/app
-      - node_modules_dev:/app/node_modules
     command: npm run start:dev
     depends_on:
       db:

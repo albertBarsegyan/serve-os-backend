@@ -10,8 +10,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
-import { OrderStatus } from '../entities/order.entity';
-import { PaymentMethod } from '@common/enums/payment.enum';
+import { OrderStatus } from '../entities/order-status.enum';
 
 export class CreateOrderItemDto {
   @ApiProperty({ example: 'uuid-v4-product-id' })
@@ -47,15 +46,6 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items: CreateOrderItemDto[];
-
-  @ApiProperty({
-    enum: PaymentMethod,
-    example: PaymentMethod.CASH,
-    required: false,
-  })
-  @IsOptional()
-  @IsEnum(PaymentMethod)
-  paymentMethod?: PaymentMethod;
 
   @ApiProperty({ example: 'session-token-from-qr', required: false })
   @IsOptional()

@@ -9,7 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 export class TablesService {
   constructor(
     @InjectRepository(Table)
-    private tableRepository: Repository<Table>,
+    private readonly tableRepository: Repository<Table>,
   ) {}
 
   async create(businessId: string, dto: CreateTableDto): Promise<Table> {
@@ -44,13 +44,13 @@ export class TablesService {
   }
 
   async update(businessId: string, id: string, dto: Partial<CreateTableDto>): Promise<Table> {
-    const table = await this.findOne(businessId, id);
+    await this.findOne(businessId, id);
     await this.tableRepository.update({ id, businessId }, dto);
     return this.findOne(businessId, id);
   }
 
   async remove(businessId: string, id: string): Promise<void> {
-    const result = await this.tableRepository.delete({ id, businessId });
+    const result = await this.tableRepository.softDelete({ id, businessId });
     if (result.affected === 0) {
       throw new NotFoundException(`Table with ID ${id} not found`);
     }

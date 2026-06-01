@@ -1,64 +1,99 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Delete,
+  ForbiddenException,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { BusinessService } from './business.service';
 import { CreateBusinessDto, UpdateBusinessDto } from './dto/business.dto';
 import { Roles } from '@common/decorators/roles.decorator';
 import { Role } from '@common/enums/role.enum';
-import { AuthUser } from '@common/decorators/auth-user.decorator';
 import { Tenant } from '@common/decorators/tenant.decorator';
-import { Public } from '@common/decorators/public.decorator';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
-import type { AuthenticatedUser } from '@common/types/authenticated-request.type';
+import type { Response } from 'express';
+import { setBusinessCookie } from '@common/utils/business.utils';
+import { ConfigService } from '@nestjs/config';
+import { UnifiedAuthGuard } from '@modules/auth/guards/unified-auth.guard';
+import { GetAuthPayload } from '@modules/auth/decorators/auth-payload.decorator';
+import type { AuthPayload } from '@modules/auth/types/auth-payload.type';
 
 @ApiTags('Business')
 @ApiBearerAuth()
 @Controller('business')
 export class BusinessController {
-  constructor(private readonly businessService: BusinessService) {}
+  constructor(
+    private readonly businessService: BusinessService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post()
+  @UseGuards(UnifiedAuthGuard)
   @AllowWithoutBusiness()
   @ApiOperation({ summary: 'Create a new business' })
   @ApiResponse({ status: 201, description: 'Business successfully created' })
-  create(
+  async create(
     @Tenant(false) _businessId: null,
     @Body() createBusinessDto: CreateBusinessDto,
-    @AuthUser() authUser: AuthenticatedUser,
+    @GetAuthPayload() authPayload: AuthPayload,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.businessService.create(createBusinessDto, authUser);
+    if (authPayload.type !== 'owner') {
+      throw new ForbiddenException('Only owners can create businesses');
+    }
+
+    const createdBusiness = await this.businessService.create(createBusinessDto, authPayload);
+
+    setBusinessCookie({
+      res,
+      businessId: createdBusiness.id,
+      isProduction: this.configService.get<string>('NODE_ENV') === 'production',
+    });
+
+    return createdBusiness;
   }
 
   @Get()
+  @UseGuards(UnifiedAuthGuard)
   @AllowWithoutBusiness()
   @ApiOperation({ summary: 'Get all businesses for current user' })
-  findAll(@AuthUser() authUser: AuthenticatedUser) {
-    return this.businessService.findAll(authUser.id);
+  findAll(@GetAuthPayload() authPayload: AuthPayload) {
+    return this.businessService.findAll(authPayload);
   }
 
   @Roles(Role.OWNER)
+  @UseGuards(UnifiedAuthGuard)
   @Get(':id')
   @ApiOperation({ summary: 'Get a business by ID' })
   @ApiResponse({ status: 200, description: 'Business found' })
   @ApiResponse({ status: 404, description: 'Business not found' })
-  findOne(@Param('id') id: string, @AuthUser() authUser: { id: string }) {
-    return this.businessService.findOne(id, authUser.id);
+  findOne(@Param('id') id: string, @GetAuthPayload() authPayload: AuthPayload) {
+    return this.businessService.findOne(id, authPayload);
   }
 
   @Roles(Role.OWNER)
+  @UseGuards(UnifiedAuthGuard)
   @Patch(':id')
   @ApiOperation({ summary: 'Update a business' })
   update(
     @Param('id') id: string,
     @Body() updateBusinessDto: UpdateBusinessDto,
-    @AuthUser() authUser: { id: string },
+    @GetAuthPayload() authPayload: AuthPayload,
   ) {
-    return this.businessService.update(id, authUser.id, updateBusinessDto);
+    return this.businessService.update(id, authPayload, updateBusinessDto);
   }
 
   @Roles(Role.OWNER)
+  @UseGuards(UnifiedAuthGuard)
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a business' })
-  remove(@Param('id') id: string, @AuthUser() authUser: { id: string }) {
-    return this.businessService.remove(id, authUser.id);
+  remove(@Param('id') id: string, @GetAuthPayload() authPayload: AuthPayload) {
+    return this.businessService.remove(id, authPayload);
   }
 }

@@ -4,18 +4,16 @@ import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
-import { FeatureGuard } from '@common/guards/feature.guard';
-import { RequireBusinessFeature } from '@common/decorators/require-feature.decorator';
+import { PermissionGuard } from '@common/guards/permission.guard';
 import { Public } from '@common/decorators/public.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { AuthUser } from '@common/decorators/auth-user.decorator';
-import { BusinessFeature } from '@common/enums/business-feature.enum';
 import { Role } from '@common/enums/role.enum';
 
 @ApiTags('Payments')
 @ApiBearerAuth()
 @Controller('payments')
-@UseGuards(TenantGuard, FeatureGuard)
+@UseGuards(TenantGuard, PermissionGuard)
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
@@ -27,11 +25,6 @@ export class PaymentsController {
     return this.paymentsService.create(businessId, dto);
   }
 
-  @RequireBusinessFeature(
-    BusinessFeature.ONLINE_PAYMENT,
-    BusinessFeature.CASH_PAYMENT,
-    BusinessFeature.POS_PAYMENT,
-  )
   @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
   @Get()
   @ApiOperation({ summary: 'Get all payments for the business' })
@@ -39,11 +32,6 @@ export class PaymentsController {
     return this.paymentsService.findAll(businessId);
   }
 
-  @RequireBusinessFeature(
-    BusinessFeature.ONLINE_PAYMENT,
-    BusinessFeature.CASH_PAYMENT,
-    BusinessFeature.POS_PAYMENT,
-  )
   @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
   @Patch(':id/confirm')
   @ApiOperation({ summary: 'Confirm a payment (Staff only)' })
