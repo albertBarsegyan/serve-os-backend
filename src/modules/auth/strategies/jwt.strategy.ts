@@ -26,7 +26,11 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
   validate(payload: AuthPayload): AuthPayload {
     if (!payload) {
-      throw new UnauthorizedException('Invalid token');
+      throw new UnauthorizedException('Invalid or malformed JWT token');
+    }
+
+    if (!payload.type) {
+      throw new UnauthorizedException('Token missing required type field');
     }
 
     return payload;

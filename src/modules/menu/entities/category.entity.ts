@@ -35,6 +35,9 @@ export class MenuCategory {
   @Column()
   name: string;
 
+  @Column({ type: 'text', nullable: true, default: null })
+  description: string | null;
+
   @Column({ default: 0 })
   sortOrder: number;
 

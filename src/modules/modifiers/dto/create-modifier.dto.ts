@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, Min, Max } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateModifierItemDto {
   @IsString()
@@ -12,4 +12,8 @@ export class CreateModifierItemDto {
   @IsNumber()
   @Min(0)
   position?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
 }

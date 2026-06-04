@@ -75,6 +75,16 @@ export const FEATURE_PRESETS: Record<BusinessType, BusinessFeature[]> = {
     BusinessFeature.TIPS,
     BusinessFeature.SPLIT_BILL,
   ],
+  [BusinessType.EVENT_VENUE]: [
+    // Core
+    BusinessFeature.TABLES,
+    BusinessFeature.QR_ORDERING,
+    BusinessFeature.ORDER_DINE_IN,
+    // Addons
+    BusinessFeature.ALLERGEN_LABELS,
+    BusinessFeature.TIPS,
+    BusinessFeature.SPLIT_BILL,
+  ],
   [BusinessType.OTHER]: [
     // Core
     BusinessFeature.TABLES,

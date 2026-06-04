@@ -1,16 +1,16 @@
 import {
+  Body,
   Controller,
   Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  UseGuards,
   Headers,
+  Param,
   ParseUUIDPipe,
+  Patch,
+  Post,
   Req,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { UpdateOrderStatusDto } from './dto/orders.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
@@ -47,9 +47,8 @@ export class OrdersController {
   }
 
   @RequireBusinessFeature(
-    BusinessFeature.ORDER_DINE_IN,
-    BusinessFeature.ORDER_TAKEAWAY,
-    BusinessFeature.ORDER_DELIVERY,
+    [BusinessFeature.ORDER_DINE_IN, BusinessFeature.ORDER_TAKEAWAY, BusinessFeature.ORDER_DELIVERY],
+    'any',
   )
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Get()
@@ -59,9 +58,8 @@ export class OrdersController {
   }
 
   @RequireBusinessFeature(
-    BusinessFeature.ORDER_DINE_IN,
-    BusinessFeature.ORDER_TAKEAWAY,
-    BusinessFeature.ORDER_DELIVERY,
+    [BusinessFeature.ORDER_DINE_IN, BusinessFeature.ORDER_TAKEAWAY, BusinessFeature.ORDER_DELIVERY],
+    'any',
   )
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Get(':id')
@@ -71,9 +69,8 @@ export class OrdersController {
   }
 
   @RequireBusinessFeature(
-    BusinessFeature.ORDER_DINE_IN,
-    BusinessFeature.ORDER_TAKEAWAY,
-    BusinessFeature.ORDER_DELIVERY,
+    [BusinessFeature.ORDER_DINE_IN, BusinessFeature.ORDER_TAKEAWAY, BusinessFeature.ORDER_DELIVERY],
+    'any',
   )
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Patch(':id/status')

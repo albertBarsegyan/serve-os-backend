@@ -45,12 +45,16 @@ export class StaffJwtStrategy extends PassportStrategy(Strategy, 'staff-jwt') {
   }
 
   async validate(payload: StaffJwtPayload): Promise<AuthenticatedStaff> {
+    if (!payload) {
+      throw new UnauthorizedException('Invalid staff token payload');
+    }
+
     const staff = await this.staffRepository.findOne({
       where: { id: payload.staffId, businessId: payload.businessId, isActive: true },
     });
 
     if (!staff) {
-      throw new UnauthorizedException('Staff access denied');
+      throw new UnauthorizedException('Staff member not found or is inactive');
     }
 
     return {

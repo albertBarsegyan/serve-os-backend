@@ -2,7 +2,8 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Business } from './entities/business.entity';
-import { CreateBusinessDto, UpdateBusinessDto } from './dto/business.dto';
+import { BusinessPaymentMethod } from './entities/business-payment-method.entity';
+import { CreateBusinessDto, UpdateBusinessDto, UpsertPaymentMethodDto } from './dto/business.dto';
 import { FEATURE_PRESETS } from '@common/constants/feature-presets';
 import { BusinessType } from '@common/enums/business-type.enum';
 import { stringToCommaSeparated } from '@common/utils/string.utils';
@@ -20,6 +21,9 @@ export class BusinessService {
 
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+
+    @InjectRepository(BusinessPaymentMethod)
+    private readonly paymentMethodRepository: Repository<BusinessPaymentMethod>,
   ) {}
 
   /**
@@ -138,6 +142,54 @@ export class BusinessService {
 
     await this.businessRepository.update({ id, ownerId: payload.userId }, updatePayload);
     return this.findOne(id, payload);
+  }
+
+  async getPaymentMethods(businessId: string, payload: AuthPayload): Promise<BusinessPaymentMethod[]> {
+    await this.findOne(businessId, payload);
+    return this.paymentMethodRepository.find({ where: { businessId } });
+  }
+
+  async upsertPaymentMethod(
+    businessId: string,
+    payload: AuthPayload,
+    dto: UpsertPaymentMethodDto,
+  ): Promise<BusinessPaymentMethod> {
+    if (payload.type !== 'owner') {
+      throw new ForbiddenException('Only owners can manage payment methods');
+    }
+    await this.findOne(businessId, payload);
+
+    const existing = await this.paymentMethodRepository.findOne({
+      where: { businessId, method: dto.method },
+    });
+
+    if (existing) {
+      await this.paymentMethodRepository.update(existing.id, {
+        isActive: dto.isActive,
+        config: dto.config !== undefined ? dto.config : existing.config,
+      });
+      return this.paymentMethodRepository.findOne({ where: { id: existing.id } }) as Promise<BusinessPaymentMethod>;
+    }
+
+    const pm = this.paymentMethodRepository.create({
+      businessId,
+      method: dto.method,
+      isActive: dto.isActive,
+      config: dto.config ?? null,
+    });
+    return this.paymentMethodRepository.save(pm);
+  }
+
+  async deletePaymentMethod(businessId: string, methodId: string, payload: AuthPayload): Promise<void> {
+    if (payload.type !== 'owner') {
+      throw new ForbiddenException('Only owners can manage payment methods');
+    }
+    await this.findOne(businessId, payload);
+
+    const pm = await this.paymentMethodRepository.findOne({ where: { id: methodId, businessId } });
+    if (!pm) throw new NotFoundException('Payment method configuration not found');
+
+    await this.paymentMethodRepository.softDelete(pm.id);
   }
 
   async remove(id: string, payload: AuthPayload): Promise<void> {

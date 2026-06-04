@@ -18,13 +18,13 @@ import { AuthService } from './auth.service';
 import { BusinessService } from '@modules/business/business.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 import { Public } from '@common/decorators/public.decorator';
-import { Tenant } from '@common/decorators/tenant.decorator';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { UnifiedAuthGuard } from '@modules/auth/guards/unified-auth.guard';
 import { GetAuthPayload } from '@modules/auth/decorators/auth-payload.decorator';
 import type { AuthPayload } from '@modules/auth/types/auth-payload.type';
 import { clearBusinessCookie, setBusinessCookie } from '@common/utils/business.utils';
+import { ErrorResponseDto } from '@common/dto/error-response.dto';
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -74,7 +74,11 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Register a new user' })
   @ApiResponse({ status: 201, description: 'User successfully registered' })
-  @ApiResponse({ status: 409, description: 'User already exists' })
+  @ApiResponse({
+    status: 409,
+    description: 'User already exists',
+    type: ErrorResponseDto,
+  })
   async register(@Body() registerDto: RegisterDto, @Res({ passthrough: true }) res: Response) {
     const { tokens, user } = await this.authService.register(registerDto);
     this.setTokenCookies(res, tokens.accessToken, tokens.refreshToken);
@@ -86,7 +90,11 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login user' })
   @ApiResponse({ status: 200, description: 'User successfully logged in' })
-  @ApiResponse({ status: 401, description: 'Invalid credentials' })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid credentials or user not found',
+    type: ErrorResponseDto,
+  })
   async login(@Body() loginDto: LoginDto, @Res({ passthrough: true }) res: Response) {
     try {
       const { tokens, user } = await this.authService.login(loginDto);
@@ -106,7 +114,11 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh access token using refresh token cookie' })
   @ApiResponse({ status: 200, description: 'Tokens refreshed' })
-  @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid or expired refresh token',
+    type: ErrorResponseDto,
+  })
   async refresh(
     @Req() req: ExpressRequest & { user: { sub: string; refreshToken: string } },
     @Res({ passthrough: true }) res: Response,
@@ -145,14 +157,18 @@ export class AuthController {
 
   @Get('me')
   @AllowWithoutBusiness()
-  @ApiOperation({ summary: 'Get current authenticated user' })
+  @ApiOperation({ summary: 'Get current authenticated user (owner or staff)' })
   @ApiResponse({ status: 200, description: 'Current user info' })
-  me(@Tenant(false) _businessId: null, @GetAuthPayload() authPayload: AuthPayload) {
-    if (authPayload.type !== 'owner') {
-      throw new ForbiddenException('Owner access required');
+  @ApiResponse({
+    status: 401,
+    description: 'User not found or inactive',
+    type: ErrorResponseDto,
+  })
+  me(@GetAuthPayload() authPayload: AuthPayload) {
+    if (authPayload.type === 'owner') {
+      return this.authService.getMe(authPayload.userId);
     }
-
-    return this.authService.getMe(authPayload.userId);
+    return this.authService.getStaffMe(authPayload.staffId);
   }
 
   @UseGuards(UnifiedAuthGuard)
@@ -161,7 +177,11 @@ export class AuthController {
   @AllowWithoutBusiness()
   @ApiOperation({ summary: 'Select / switch active business' })
   @ApiResponse({ status: 200, description: 'Business selected' })
-  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - no access to this business',
+    type: ErrorResponseDto,
+  })
   async selectBusiness(
     @GetAuthPayload() authPayload: AuthPayload,
     @Body('businessId') businessId: string,

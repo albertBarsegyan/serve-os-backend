@@ -18,6 +18,7 @@ export const FEATURES_KEY = 'required_features';
  * before allowing access to this endpoint.
  *
  * @param features - One or more BusinessFeature flags required for this endpoint
+ * @param mode
  */
-export const RequireBusinessFeature = (...features: BusinessFeature[]) =>
-  SetMetadata(FEATURES_KEY, features);
+export const RequireBusinessFeature = (features: BusinessFeature[], mode: 'any' | 'all' = 'all') =>
+  SetMetadata(FEATURES_KEY, { features, mode });

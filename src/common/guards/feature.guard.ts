@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { FEATURES_KEY } from '@common/decorators/require-feature.decorator';
 import { Business } from '@modules/business/entities/business.entity';
@@ -42,19 +42,20 @@ export class FeatureGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     // Read required features from decorator metadata
-    const requiredFeatures = this.reflector.getAllAndOverride<BusinessFeature[]>(FEATURES_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const metadata = this.reflector.get<{
+      features: BusinessFeature[];
+      mode: 'any' | 'all';
+    }>(FEATURES_KEY, context.getHandler());
 
     // If no features required, skip feature checks
-    if (!requiredFeatures || requiredFeatures?.length === 0) {
+    if (!metadata?.features || metadata.features.length === 0) {
       return true;
     }
 
+    const { features, mode = 'all' } = metadata;
+
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const businessId = request.business?.id ?? request.businessId ?? null;
-
     if (!businessId) {
       throw new ForbiddenException('No business context available to check features');
     }
@@ -63,19 +64,28 @@ export class FeatureGuard implements CanActivate {
       where: { id: businessId },
       select: ['id', 'features', 'type'],
     });
-
     if (!business) {
       throw new ForbiddenException('Business not found for feature check');
     }
 
-    // Check if all required features are enabled
     const businessFeatures = business.features || [];
-    const missing = requiredFeatures.filter((f) => !businessFeatures.includes(f));
 
-    if (missing?.length > 0) {
-      throw new ForbiddenException(
-        `Business does not have required features: ${missing.join(', ')}`,
-      );
+    if (mode === 'any') {
+      // At least one feature must be enabled
+      const hasAny = features.some((f) => businessFeatures.includes(f));
+      if (!hasAny) {
+        throw new ForbiddenException(
+          `Business must have at least one of the features: ${features.join(', ')}`,
+        );
+      }
+    } else {
+      // All features must be enabled
+      const missing = features.filter((f) => !businessFeatures.includes(f));
+      if (missing.length > 0) {
+        throw new ForbiddenException(
+          `Business does not have required features: ${missing.join(', ')}`,
+        );
+      }
     }
 
     return true;

@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { MenuCategory } from './entities/category.entity';
 import { Product } from './entities/product.entity';
-import { CreateCategoryDto, CreateProductDto } from './dto/menu.dto';
+import { ModifierGroup } from '@modules/modifiers/entities/modifier-group.entity';
+import { CreateCategoryDto, UpdateCategoryDto, CreateProductDto } from './dto/menu.dto';
 import slugify from 'slugify';
 
 @Injectable()
@@ -13,6 +14,8 @@ export class MenuService {
     private readonly categoryRepository: Repository<MenuCategory>,
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
+    @InjectRepository(ModifierGroup)
+    private readonly modifierGroupRepository: Repository<ModifierGroup>,
   ) {}
 
   async createCategory(businessId: string, dto: CreateCategoryDto): Promise<MenuCategory> {
@@ -36,6 +39,17 @@ export class MenuService {
       throw new NotFoundException(`Category with ID ${id} not found`);
     }
     return category;
+  }
+
+  async updateCategory(businessId: string, id: string, dto: UpdateCategoryDto): Promise<MenuCategory> {
+    const category = await this.findCategory(businessId, id);
+    Object.assign(category, dto);
+    return this.categoryRepository.save(category);
+  }
+
+  async removeCategory(businessId: string, id: string): Promise<void> {
+    const category = await this.findCategory(businessId, id);
+    await this.categoryRepository.softDelete(category.id);
   }
 
   async createProduct(businessId: string, dto: CreateProductDto): Promise<Product> {
@@ -94,7 +108,7 @@ export class MenuService {
   async findProduct(businessId: string, id: string): Promise<Product> {
     const product = await this.productRepository.findOne({
       where: { id, businessId },
-      relations: ['category', 'kitchenStation'],
+      relations: ['category', 'kitchenStation', 'modifierGroups', 'modifierGroups.modifiers'],
     });
     if (!product) {
       throw new NotFoundException(`Product with ID ${id} not found`);
@@ -142,5 +156,28 @@ export class MenuService {
     if (result.affected === 0) {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
+  }
+
+  async syncModifierGroups(businessId: string, productId: string, groupIds: string[]): Promise<Product> {
+    const product = await this.productRepository.findOne({
+      where: { id: productId, businessId },
+      relations: ['modifierGroups'],
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${productId} not found`);
+    }
+
+    const groups =
+      groupIds.length > 0
+        ? await this.modifierGroupRepository.find({
+            where: { businessId, id: In(groupIds) },
+          })
+        : [];
+
+    product.modifierGroups = groups;
+    await this.productRepository.save(product);
+
+    return this.findProduct(businessId, productId);
   }
 }

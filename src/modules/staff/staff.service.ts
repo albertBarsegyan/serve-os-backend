@@ -134,10 +134,9 @@ export class StaffService {
     }
 
     // Hash the new password
-    const hashedPassword = await bcrypt.hash(dto.newPassword, this.PIN_HASH_ROUNDS);
 
     // Update staff
-    staff.passwordHash = hashedPassword;
+    staff.passwordHash = await bcrypt.hash(dto.newPassword, this.PIN_HASH_ROUNDS);
     staff.authType = StaffAuthType.PASSWORD;
     staff.mustChangePassword = false;
     staff.inviteToken = null;
@@ -166,7 +165,7 @@ export class StaffService {
     });
 
     if (!staff) {
-      throw new BadRequestException('Invalid credentials');
+      throw new BadRequestException('Staff member not found or invalid PIN authentication method');
     }
 
     if (!staff.pin) {
@@ -176,7 +175,7 @@ export class StaffService {
     // Compare PIN with bcrypt
     const isValidPin = await bcrypt.compare(pin, staff.pin);
     if (!isValidPin) {
-      throw new BadRequestException('Invalid credentials');
+      throw new BadRequestException('Invalid PIN');
     }
 
     // Generate JWT
@@ -212,24 +211,24 @@ export class StaffService {
     });
 
     if (!staff) {
-      throw new BadRequestException('Invalid credentials');
+      throw new BadRequestException('Staff member not found with this email');
     }
 
     if (
       staff.authType !== StaffAuthType.PASSWORD &&
       staff.authType !== StaffAuthType.INVITE_PENDING
     ) {
-      throw new BadRequestException('Invalid login method for this staff');
+      throw new BadRequestException('Invalid login method for this staff member');
     }
 
     if (!staff.passwordHash) {
-      throw new BadRequestException('Password not set');
+      throw new BadRequestException('Password not configured for this staff member');
     }
 
     // Compare password with bcrypt
     const isValidPassword = await bcrypt.compare(password, staff.passwordHash);
     if (!isValidPassword) {
-      throw new BadRequestException('Invalid credentials');
+      throw new BadRequestException('Invalid password');
     }
 
     // Check if password change is required

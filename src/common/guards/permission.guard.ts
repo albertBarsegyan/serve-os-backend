@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import {
   PERMISSION_KEY,
@@ -21,10 +21,10 @@ import { canDo } from '@common/utils/permissions.util';
  *
  * Behavior:
  * 1. Reads permission metadata from @RequirePermission(feature, action) decorator
- * 2. Extracts staff and business from request context
- * 3. Calls canDo(staff, business, feature, action) to verify permission
- * 4. Throws 403 Forbidden if permission check fails
- * 5. If no @RequirePermission is specified, allows access (opt-in per route)
+ * 2. If no @RequirePermission is specified, allows access (opt-in per route)
+ * 3. Owners pass through unconditionally — TenantGuard already verified ownership
+ * 4. For staff, calls canDo(staff, business, feature, action) to verify permission
+ * 5. Throws 403 Forbidden if permission check fails
  *
  * Example:
  * @RequirePermission(BusinessFeature.KITCHEN, 'update')
@@ -39,7 +39,7 @@ import { canDo } from '@common/utils/permissions.util';
 @Injectable()
 export class PermissionGuard implements CanActivate {
   constructor(
-    private reflector: Reflector,
+    private readonly reflector: Reflector,
     @InjectRepository(Business)
     private readonly businessRepository: Repository<Business>,
     @InjectRepository(Staff)
@@ -61,8 +61,16 @@ export class PermissionGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const payload = request.user;
 
-    // Only staff can access this - owners cannot use permission checks for staff-scoped resources
-    if (!payload || payload.type !== 'staff') {
+    if (!payload) {
+      throw new ForbiddenException('Permission check requires staff context');
+    }
+
+    // Owners have implicit full access — TenantGuard already verified business ownership
+    if (payload.type === 'owner') {
+      return true;
+    }
+
+    if (payload.type !== 'staff') {
       throw new ForbiddenException('Permission check requires staff context');
     }
 

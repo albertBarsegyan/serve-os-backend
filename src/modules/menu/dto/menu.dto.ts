@@ -25,11 +25,18 @@ export class CreateCategoryDto {
   @IsString()
   name: string;
 
+  @ApiProperty({ example: 'Hearty mains for every appetite', required: false })
+  @IsOptional()
+  @IsString()
+  description?: string | null;
+
   @ApiProperty({ example: 1, required: false })
   @IsOptional()
   @IsNumber()
   sortOrder?: number;
 }
+
+export class UpdateCategoryDto extends PartialType(CreateCategoryDto) {}
 
 export class CreateProductVariantDto {
   @ApiProperty({ example: 'Large' })
@@ -149,3 +156,10 @@ export class CreateProductDto {
 }
 
 export class UpdateProductDto extends PartialType(CreateProductDto) {}
+
+export class SyncModifierGroupsDto {
+  @ApiProperty({ type: [String], description: 'Modifier group IDs to attach to the product' })
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  groupIds: string[];
+}

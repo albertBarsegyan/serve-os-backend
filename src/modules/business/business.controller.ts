@@ -7,12 +7,13 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Res,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { BusinessService } from './business.service';
-import { CreateBusinessDto, UpdateBusinessDto } from './dto/business.dto';
+import { CreateBusinessDto, UpdateBusinessDto, UpsertPaymentMethodDto } from './dto/business.dto';
 import { Roles } from '@common/decorators/roles.decorator';
 import { Role } from '@common/enums/role.enum';
 import { Tenant } from '@common/decorators/tenant.decorator';
@@ -95,5 +96,37 @@ export class BusinessController {
   @ApiOperation({ summary: 'Delete a business' })
   remove(@Param('id') id: string, @GetAuthPayload() authPayload: AuthPayload) {
     return this.businessService.remove(id, authPayload);
+  }
+
+  @Roles(Role.OWNER)
+  @UseGuards(UnifiedAuthGuard)
+  @Get(':id/payment-methods')
+  @ApiOperation({ summary: 'Get payment method configurations for a business' })
+  getPaymentMethods(@Param('id') id: string, @GetAuthPayload() authPayload: AuthPayload) {
+    return this.businessService.getPaymentMethods(id, authPayload);
+  }
+
+  @Roles(Role.OWNER)
+  @UseGuards(UnifiedAuthGuard)
+  @Put(':id/payment-methods')
+  @ApiOperation({ summary: 'Create or update a payment method configuration' })
+  upsertPaymentMethod(
+    @Param('id') id: string,
+    @Body() dto: UpsertPaymentMethodDto,
+    @GetAuthPayload() authPayload: AuthPayload,
+  ) {
+    return this.businessService.upsertPaymentMethod(id, authPayload, dto);
+  }
+
+  @Roles(Role.OWNER)
+  @UseGuards(UnifiedAuthGuard)
+  @Delete(':id/payment-methods/:methodId')
+  @ApiOperation({ summary: 'Remove a payment method configuration' })
+  deletePaymentMethod(
+    @Param('id') id: string,
+    @Param('methodId') methodId: string,
+    @GetAuthPayload() authPayload: AuthPayload,
+  ) {
+    return this.businessService.deletePaymentMethod(id, methodId, authPayload);
   }
 }

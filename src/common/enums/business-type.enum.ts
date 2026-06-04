@@ -12,5 +12,6 @@ export enum BusinessType {
   FAST_FOOD = 'FAST_FOOD',
   FOOD_TRUCK = 'FOOD_TRUCK',
   HOTEL = 'HOTEL',
+  EVENT_VENUE = 'EVENT_VENUE',
   OTHER = 'OTHER',
 }

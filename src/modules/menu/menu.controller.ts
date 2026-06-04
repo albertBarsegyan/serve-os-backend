@@ -1,7 +1,7 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { MenuService } from './menu.service';
-import { CreateCategoryDto, CreateProductDto } from './dto/menu.dto';
+import { CreateCategoryDto, UpdateCategoryDto, CreateProductDto, SyncModifierGroupsDto } from './dto/menu.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { Roles } from '@common/decorators/roles.decorator';
@@ -29,6 +29,28 @@ export class MenuController {
     return this.menuService.findAllCategories(businessId);
   }
 
+  @Get('categories/:id')
+  @ApiOperation({ summary: 'Get a single category' })
+  findCategory(@Tenant(true) businessId: string, @Param('id') id: string) {
+    return this.menuService.findCategory(businessId, id);
+  }
+
+  @Patch('categories/:id')
+  @ApiOperation({ summary: 'Update a category' })
+  updateCategory(
+    @Tenant(true) businessId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateCategoryDto,
+  ) {
+    return this.menuService.updateCategory(businessId, id, dto);
+  }
+
+  @Delete('categories/:id')
+  @ApiOperation({ summary: 'Delete a category' })
+  removeCategory(@Tenant(true) businessId: string, @Param('id') id: string) {
+    return this.menuService.removeCategory(businessId, id);
+  }
+
   @Post('products')
   @ApiOperation({ summary: 'Create a new product' })
   @ApiResponse({ status: 201, description: 'Product successfully created' })
@@ -40,6 +62,12 @@ export class MenuController {
   @ApiOperation({ summary: 'Get all products for the business' })
   findAllProducts(@Tenant(true) businessId: string) {
     return this.menuService.findAllProducts(businessId);
+  }
+
+  @Get('products/:id')
+  @ApiOperation({ summary: 'Get a single product' })
+  findProduct(@Tenant(true) businessId: string, @Param('id') id: string) {
+    return this.menuService.findProduct(businessId, id);
   }
 
   @Patch('products/:id')
@@ -56,5 +84,15 @@ export class MenuController {
   @ApiOperation({ summary: 'Delete a product' })
   removeProduct(@Tenant(true) businessId: string, @Param('id') id: string) {
     return this.menuService.removeProduct(businessId, id);
+  }
+
+  @Put('products/:id/modifier-groups')
+  @ApiOperation({ summary: 'Sync modifier groups attached to a product' })
+  syncProductModifierGroups(
+    @Tenant(true) businessId: string,
+    @Param('id') id: string,
+    @Body() dto: SyncModifierGroupsDto,
+  ) {
+    return this.menuService.syncModifierGroups(businessId, id, dto.groupIds);
   }
 }

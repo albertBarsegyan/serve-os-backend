@@ -17,6 +17,7 @@ import { StaffModule } from '@modules/staff/staff.module';
 import { TableSessionsModule } from '@modules/table-sessions/table-sessions.module';
 import { TablesModule } from '@modules/tables/tables.module';
 import { TenantModule } from '@common/tenant/tenant.module';
+import { UsersModule } from '@modules/users/users.module';
 
 // ── Guards / Filters / Middleware ─────────────────────────────────────────────
 import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
@@ -26,7 +27,7 @@ import { TenantMiddleware } from '@common/middleware/tenant.middleware';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 import { AuthenticatedRequest } from '@common/types/authenticated-request.type';
-import { ServerResponse } from 'node:http';
+import { IncomingMessage, ServerResponse } from 'node:http';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const FEATURE_MODULES = [
@@ -41,6 +42,7 @@ const FEATURE_MODULES = [
   TableSessionsModule,
   TablesModule,
   TenantModule,
+  UsersModule,
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -76,7 +78,6 @@ function resolveLogContext(req: AuthenticatedRequest): Record<string, unknown> {
       useFactory: (config: ConfigService) => {
         const isProd = config.get('NODE_ENV') === 'production';
         const level: string = config.get<string>('LOG_LEVEL', isProd ? 'info' : 'debug');
-
         return {
           pinoHttp: {
             level,
@@ -89,6 +90,25 @@ function resolveLogContext(req: AuthenticatedRequest): Record<string, unknown> {
               ],
               censor: '[REDACTED]',
             },
+            // colorize status codes and method
+            customSuccessMessage: (req: IncomingMessage, res: ServerResponse) =>
+              `${req.method} ${req.url} → ${res.statusCode}`,
+            customErrorMessage: (req: IncomingMessage, res: ServerResponse, err: Error) =>
+              `${req.method} ${req.url} → ${res.statusCode} (${err.message})`,
+            // shape what gets logged
+            serializers: {
+              req: (req: IncomingMessage) => ({
+                id: req.id,
+                method: req.method,
+                url: req.url,
+                rawHeaders: req.rawHeaders,
+                // omit headers noise, add only what's useful
+                ua: req.headers['user-agent'],
+              }),
+              res: (res: ServerResponse) => ({
+                statusCode: res.statusCode,
+              }),
+            },
             transport: isProd
               ? undefined
               : {
@@ -98,6 +118,9 @@ function resolveLogContext(req: AuthenticatedRequest): Record<string, unknown> {
                     singleLine: true,
                     translateTime: 'SYS:standard',
                     ignore: 'pid,hostname',
+                    // color status codes: green 2xx, yellow 3xx, red 4xx/5xx
+                    customColors: 'info:green,warn:yellow,error:red,debug:blue',
+                    messageFormat: '{msg} {req.method} {req.url} {res.statusCode}ms',
                   },
                 },
             customProps: resolveLogContext,

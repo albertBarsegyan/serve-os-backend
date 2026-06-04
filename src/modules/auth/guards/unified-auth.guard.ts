@@ -6,7 +6,7 @@ import { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 export class UnifiedAuthGuard extends AuthGuard('jwt') {
   handleRequest(err: any, payload: any, _info: any): any {
     if (err || !payload) {
-      throw err || new UnauthorizedException();
+      throw err || new UnauthorizedException('Invalid or missing authentication token');
     }
 
     return payload;

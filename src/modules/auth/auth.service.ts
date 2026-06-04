@@ -10,13 +10,17 @@ import { LoginDto, RegisterDto } from './dto/auth.dto';
 import { AuthPayload, OwnerPayload, StaffPayload } from './types/auth-payload.type';
 import * as bcrypt from 'bcrypt';
 import { Role } from '@common/enums/role.enum';
+import { StaffRole } from '@common/enums/staff-role.enum';
+import { StaffPermission, ROLE_PERMISSION_MAP } from '@common/enums/staff-permission.enum';
+import { BusinessFeature } from '@common/enums/business-feature.enum';
 
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;
 }
 
-export interface AuthUser {
+export interface OwnerAuthUser {
+  type: 'owner';
   id: string;
   email: string;
   firstName: string;
@@ -24,6 +28,19 @@ export interface AuthUser {
   hasBusiness: boolean;
   role: string;
 }
+
+export interface StaffAuthUser {
+  type: 'staff';
+  staffId: string;
+  displayName: string;
+  email: string | null;
+  businessId: string;
+  role: StaffRole;
+  permissions: StaffPermission[];
+  business: { features: BusinessFeature[] };
+}
+
+export type AuthUser = OwnerAuthUser | StaffAuthUser;
 
 @Injectable()
 export class AuthService {
@@ -38,11 +55,11 @@ export class AuthService {
   ) {}
 
   /**
-   * Build the AuthUser shape from a User.
-   * Owners use their User role; Staff members authenticate via separate endpoint.
+   * Build the OwnerAuthUser shape from a User.
    */
-  private buildAuthUser(user: User): AuthUser {
+  private buildAuthUser(user: User): OwnerAuthUser {
     return {
+      type: 'owner',
       id: user.id,
       email: user.email,
       firstName: user.firstName,
@@ -186,24 +203,49 @@ export class AuthService {
     return { access_token };
   }
 
-  async getMe(userId: string): Promise<{ user: AuthUser }> {
+  async getMe(userId: string): Promise<{ user: OwnerAuthUser }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
 
-    if (!user?.isActive) {
-      throw new UnauthorizedException('Access denied');
+    if (!user) {
+      this.logger.warn({ userId }, 'getMe failed: user not found');
+      throw new UnauthorizedException('User not found');
     }
 
-    const authUser: AuthUser = {
-      id: user.id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      hasBusiness: user?.hasBusiness,
-      role: user.role,
-    };
+    if (!user.isActive) {
+      this.logger.warn({ userId }, 'getMe failed: user is inactive');
+      throw new UnauthorizedException('User account is inactive');
+    }
+
+    return { user: this.buildAuthUser(user) };
+  }
+
+  async getStaffMe(staffId: string): Promise<{ user: StaffAuthUser }> {
+    const staff = await this.staffRepository.findOne({
+      where: { id: staffId },
+      relations: { business: true },
+    });
+
+    if (!staff) {
+      this.logger.warn({ staffId }, 'getStaffMe failed: staff not found');
+      throw new UnauthorizedException('Staff not found');
+    }
+
+    if (!staff.isActive) {
+      this.logger.warn({ staffId }, 'getStaffMe failed: staff is inactive');
+      throw new UnauthorizedException('Staff account is inactive');
+    }
 
     return {
-      user: authUser,
+      user: {
+        type: 'staff',
+        staffId: staff.id,
+        displayName: staff.displayName,
+        email: staff.email,
+        businessId: staff.businessId,
+        role: staff.role,
+        permissions: ROLE_PERMISSION_MAP[staff.role],
+        business: { features: staff.business?.features ?? [] },
+      },
     };
   }
 
@@ -213,13 +255,20 @@ export class AuthService {
   ): Promise<{ tokens: TokenPair; user: AuthUser }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
 
-    if (!user?.isActive) {
-      throw new UnauthorizedException('Access denied');
+    if (!user) {
+      this.logger.warn({ userId }, 'refreshTokens failed: user not found');
+      throw new UnauthorizedException('User not found');
+    }
+
+    if (!user.isActive) {
+      this.logger.warn({ userId }, 'refreshTokens failed: user is inactive');
+      throw new UnauthorizedException('User account is inactive');
     }
 
     if (!user.refreshToken) {
       // No token stored — user has logged out or never logged in via this flow.
-      throw new UnauthorizedException('Access denied');
+      this.logger.warn({ userId }, 'refreshTokens failed: no refresh token stored');
+      throw new UnauthorizedException('No valid refresh token');
     }
 
     const tokenMatches = await bcrypt.compare(incomingRefreshToken, user.refreshToken);
@@ -231,7 +280,7 @@ export class AuthService {
         { userId },
         'Refresh token mismatch — possible reuse attack, sessions cleared',
       );
-      throw new UnauthorizedException('Access denied');
+      throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
     // generateTokensForOwner atomically replaces the stored hash with the new token
