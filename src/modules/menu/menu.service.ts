@@ -6,6 +6,7 @@ import { Product } from './entities/product.entity';
 import { ModifierGroup } from '@modules/modifiers/entities/modifier-group.entity';
 import { CreateCategoryDto, CreateProductDto, UpdateCategoryDto } from './dto/menu.dto';
 import slugify from 'slugify';
+import { Business } from '@modules/business/entities/business.entity';
 
 @Injectable()
 export class MenuService {
@@ -151,7 +152,7 @@ export class MenuService {
       updateData.kitchenStationId = category.kitchenStationId ?? null;
     }
 
-    await this.productRepository.update({ id, businessId }, updateData);
+    await this.productRepository.update({ id, businessId }, updateData as Business);
     return this.findProduct(businessId, id);
   }
 

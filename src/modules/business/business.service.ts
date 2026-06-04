@@ -169,8 +169,9 @@ export class BusinessService {
     if (existing) {
       await this.paymentMethodRepository.update(existing.id, {
         isActive: dto.isActive,
-        config: dto.config ?? existing.config,
+        config: (dto.config ?? existing.config) as never,
       });
+
       return this.paymentMethodRepository.findOne({
         where: { id: existing.id },
       }) as Promise<BusinessPaymentMethod>;
