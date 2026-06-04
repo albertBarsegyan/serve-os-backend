@@ -4,7 +4,7 @@ import { In, Repository } from 'typeorm';
 import { MenuCategory } from './entities/category.entity';
 import { Product } from './entities/product.entity';
 import { ModifierGroup } from '@modules/modifiers/entities/modifier-group.entity';
-import { CreateCategoryDto, UpdateCategoryDto, CreateProductDto } from './dto/menu.dto';
+import { CreateCategoryDto, CreateProductDto, UpdateCategoryDto } from './dto/menu.dto';
 import slugify from 'slugify';
 
 @Injectable()
@@ -41,7 +41,11 @@ export class MenuService {
     return category;
   }
 
-  async updateCategory(businessId: string, id: string, dto: UpdateCategoryDto): Promise<MenuCategory> {
+  async updateCategory(
+    businessId: string,
+    id: string,
+    dto: UpdateCategoryDto,
+  ): Promise<MenuCategory> {
     const category = await this.findCategory(businessId, id);
     Object.assign(category, dto);
     return this.categoryRepository.save(category);
@@ -158,7 +162,11 @@ export class MenuService {
     }
   }
 
-  async syncModifierGroups(businessId: string, productId: string, groupIds: string[]): Promise<Product> {
+  async syncModifierGroups(
+    businessId: string,
+    productId: string,
+    groupIds: string[],
+  ): Promise<Product> {
     const product = await this.productRepository.findOne({
       where: { id: productId, businessId },
       relations: ['modifierGroups'],

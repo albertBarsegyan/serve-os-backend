@@ -1,14 +1,14 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
   Column,
-  ManyToOne,
-  JoinColumn,
   CreateDateColumn,
-  UpdateDateColumn,
   DeleteDateColumn,
+  Entity,
   Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
   Unique,
+  UpdateDateColumn,
 } from 'typeorm';
 import { Business } from './business.entity';
 import { PaymentMethod } from '@common/enums/payment.enum';
@@ -33,7 +33,7 @@ export class BusinessPaymentMethod {
   isActive: boolean;
 
   @Column({ type: 'jsonb', nullable: true })
-  config: any;
+  config: unknown;
 
   @CreateDateColumn()
   createdAt: Date;

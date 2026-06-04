@@ -144,7 +144,10 @@ export class BusinessService {
     return this.findOne(id, payload);
   }
 
-  async getPaymentMethods(businessId: string, payload: AuthPayload): Promise<BusinessPaymentMethod[]> {
+  async getPaymentMethods(
+    businessId: string,
+    payload: AuthPayload,
+  ): Promise<BusinessPaymentMethod[]> {
     await this.findOne(businessId, payload);
     return this.paymentMethodRepository.find({ where: { businessId } });
   }
@@ -166,9 +169,11 @@ export class BusinessService {
     if (existing) {
       await this.paymentMethodRepository.update(existing.id, {
         isActive: dto.isActive,
-        config: dto.config !== undefined ? dto.config : existing.config,
+        config: dto.config ?? existing.config,
       });
-      return this.paymentMethodRepository.findOne({ where: { id: existing.id } }) as Promise<BusinessPaymentMethod>;
+      return this.paymentMethodRepository.findOne({
+        where: { id: existing.id },
+      }) as Promise<BusinessPaymentMethod>;
     }
 
     const pm = this.paymentMethodRepository.create({
@@ -180,7 +185,11 @@ export class BusinessService {
     return this.paymentMethodRepository.save(pm);
   }
 
-  async deletePaymentMethod(businessId: string, methodId: string, payload: AuthPayload): Promise<void> {
+  async deletePaymentMethod(
+    businessId: string,
+    methodId: string,
+    payload: AuthPayload,
+  ): Promise<void> {
     if (payload.type !== 'owner') {
       throw new ForbiddenException('Only owners can manage payment methods');
     }

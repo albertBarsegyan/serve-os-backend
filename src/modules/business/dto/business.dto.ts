@@ -1,4 +1,12 @@
-import { IsNotEmpty, IsString, IsEnum, IsOptional, IsBoolean, IsArray, IsObject } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { BusinessType } from '@common/enums/business-type.enum';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
@@ -54,12 +62,13 @@ export class UpsertPaymentMethodDto {
 
   @ApiProperty({
     required: false,
-    description: 'Method-specific config. For ONLINE: { clientId, secretKey, merchantId, testMode }',
+    description:
+      'Method-specific config. For ONLINE: { clientId, secretKey, merchantId, testMode }',
     example: { clientId: 'xxx', secretKey: 'yyy', merchantId: '12345', testMode: false },
   })
   @IsOptional()
   @IsObject()
-  config?: Record<string, any>;
+  config?: Record<string, unknown>;
 }
 
 export class UpdateBusinessDto {
