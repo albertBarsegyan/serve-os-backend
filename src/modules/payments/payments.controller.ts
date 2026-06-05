@@ -19,9 +19,9 @@ export class PaymentsController {
 
   @Public()
   @Post()
-  @ApiOperation({ summary: 'Initiate a payment' })
+  @ApiOperation({ summary: 'Initiate a payment (businessId resolved from order when no cookie)' })
   @ApiResponse({ status: 201, description: 'Payment record created' })
-  create(@Tenant(true) businessId: string, @Body() dto: CreatePaymentDto) {
+  create(@Tenant(false) businessId: string | null, @Body() dto: CreatePaymentDto) {
     return this.paymentsService.create(businessId, dto);
   }
 

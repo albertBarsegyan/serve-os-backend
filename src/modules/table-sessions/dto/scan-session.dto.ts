@@ -2,11 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsUUID } from 'class-validator';
 
 export class ScanSessionDto {
-  @ApiProperty({ example: 'uuid-business-id' })
+  @ApiProperty({ example: 'uuid-qr-code', description: 'The qrCode value from the table entity' })
   @IsUUID()
-  businessId: string;
-
-  @ApiProperty({ example: 'uuid-table-id' })
-  @IsUUID()
-  tableId: string;
+  qrCode: string;
 }

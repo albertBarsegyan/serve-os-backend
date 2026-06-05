@@ -17,33 +17,33 @@ export class PaymentsService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async create(businessId: string, dto: CreatePaymentDto): Promise<Payment> {
+  async create(businessId: string | null, dto: CreatePaymentDto): Promise<Payment> {
     const order = await this.orderRepository.findOne({
-      where: { id: dto.orderId, businessId },
+      where: businessId ? { id: dto.orderId, businessId } : { id: dto.orderId },
     });
 
     if (!order) {
       throw new NotFoundException(`Order with ID ${dto.orderId} not found`);
     }
 
+    const resolvedBusinessId = businessId ?? order.businessId;
+
     const payment = this.paymentRepository.create({
       ...dto,
-      businessId,
+      businessId: resolvedBusinessId,
       status: PaymentStatus.PENDING,
     });
 
     const savedPayment = await this.paymentRepository.save(payment);
 
     if (dto.method === PaymentMethod.ONLINE) {
-      // Mock online payment confirmation
-      this.confirmOnlinePayment(savedPayment.id, businessId);
+      this.confirmOnlinePayment(savedPayment.id, resolvedBusinessId);
     }
 
     return savedPayment;
   }
 
   private confirmOnlinePayment(paymentId: string, businessId: string) {
-    // Simulate async webhook
     setTimeout(() => {
       void this.confirmPayment(paymentId, businessId, null);
     }, 2000);

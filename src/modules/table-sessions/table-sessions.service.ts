@@ -36,32 +36,28 @@ export class TableSessionsService {
     private readonly orderRepository: Repository<Order>,
   ) {}
 
-  async scan(businessId: string, tableId: string) {
+  async scan(qrCode: string) {
+    const table = await this.tableRepository.findOne({ where: { qrCode, isActive: true } });
+    if (!table) {
+      throw new NotFoundException('Table not found or inactive');
+    }
+
     const business = await this.businessRepository.findOne({
-      where: { id: businessId, isActive: true },
+      where: { id: table.businessId, isActive: true },
     });
     if (!business) {
       throw new NotFoundException('Business not found or inactive');
     }
 
-    const table = await this.tableRepository.findOne({ where: { id: tableId, isActive: true } });
-    if (!table) {
-      throw new NotFoundException('Table not found or inactive');
-    }
-
-    if (table.businessId !== businessId) {
-      throw new BadRequestException('Table does not belong to business');
-    }
-
     let session = await this.tableSessionRepository.findOne({
-      where: { businessId, tableId, isActive: true },
+      where: { businessId: table.businessId, tableId: table.id, isActive: true },
       order: { openedAt: 'DESC' },
     });
 
     session ??= await this.tableSessionRepository.save(
       this.tableSessionRepository.create({
-        businessId,
-        tableId,
+        businessId: table.businessId,
+        tableId: table.id,
         sessionToken: uuid(),
         isActive: true,
         closedAt: null,
@@ -71,6 +67,8 @@ export class TableSessionsService {
     return {
       sessionToken: session.sessionToken,
       tableSessionId: session.id,
+      businessId: session.businessId,
+      tableId: session.tableId,
       tableName: `Table ${table.number}`,
       businessName: business.name,
     };

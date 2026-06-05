@@ -15,6 +15,7 @@ import { Table } from '@modules/tables/entities/table.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
 import { TableSessionsService } from '@modules/table-sessions/table-sessions.service';
 import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
+import { OrderItemModifier } from '@modules/modifiers/entities/order-item-modifier.entity';
 import { OrderStatus } from './entities/order-status.enum';
 import { OrderType } from './entities/order-type.enum';
 import { Business } from '@modules/business/entities/business.entity';
@@ -87,17 +88,25 @@ export class OrdersService {
           throw new NotFoundException(`Product with ID ${itemDto.productId} not found`);
         }
 
-        const unitPrice = Number(product.price);
+        const modifiers = itemDto.selectedModifiers ?? [];
+        const modifierPrice = modifiers.reduce((sum, m) => sum + Number(m.priceAdjustment), 0);
+        const unitPrice = Number(product.price) + modifierPrice;
         totalAmount += unitPrice * itemDto.quantity;
 
-        orderItems.push(
-          queryRunner.manager.create(OrderItem, {
-            productId: product.id,
-            quantity: itemDto.quantity,
-            unitPrice,
-            notes: itemDto.notes,
-          }),
-        );
+        const orderItem = queryRunner.manager.create(OrderItem, {
+          productId: product.id,
+          quantity: itemDto.quantity,
+          unitPrice,
+          notes: itemDto.notes,
+          selectedModifiers: modifiers.map((m) =>
+            queryRunner.manager.create(OrderItemModifier, {
+              modifierId: m.modifierId,
+              modifierName: m.name,
+              priceAdjustment: m.priceAdjustment,
+            }),
+          ),
+        });
+        orderItems.push(orderItem);
       }
 
       const order = queryRunner.manager.create(Order, {

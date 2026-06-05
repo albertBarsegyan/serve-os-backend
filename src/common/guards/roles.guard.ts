@@ -2,6 +2,7 @@ import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@
 import { Reflector } from '@nestjs/core';
 import { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import { ROLES_KEY } from '@common/decorators/roles.decorator';
+import { IS_PUBLIC_KEY } from '@common/decorators/public.decorator';
 import { Role } from '@common/enums/role.enum';
 import { PinoLogger } from 'nestjs-pino';
 
@@ -13,6 +14,13 @@ export class RolesGuard implements CanActivate {
   ) {}
 
   canActivate(context: ExecutionContext): boolean {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    if (isPublic) return true;
+
     const requiredRoles = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),

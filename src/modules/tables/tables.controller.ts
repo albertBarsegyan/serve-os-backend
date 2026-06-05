@@ -1,5 +1,5 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { TablesService } from './tables.service';
 import { CreateTableDto } from './dto/create-table.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
@@ -27,7 +27,7 @@ export class TablesController {
     return this.tablesService.create(businessId, dto);
   }
 
-  @Roles(Role.OWNER, Role.ADMIN)
+  @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
   @RequirePermission(BusinessFeature.TABLES, 'read')
   @Get()
   @ApiOperation({ summary: 'Get all tables for the business' })

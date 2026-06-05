@@ -1,10 +1,12 @@
-import { Controller, Get, Post, Put, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, Patch, Param, Delete, Query, ParseUUIDPipe, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { MenuService } from './menu.service';
 import { CreateCategoryDto, UpdateCategoryDto, CreateProductDto, SyncModifierGroupsDto } from './dto/menu.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { Roles } from '@common/decorators/roles.decorator';
+import { Public } from '@common/decorators/public.decorator';
+import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
 
@@ -15,6 +17,14 @@ import { StaffRole } from '@common/enums/staff-role.enum';
 @Roles(Role.OWNER, StaffRole.MANAGER)
 export class MenuController {
   constructor(private readonly menuService: MenuService) {}
+
+  @Public()
+  @AllowWithoutBusiness()
+  @Get('customer')
+  @ApiOperation({ summary: 'Get public menu for customer QR flow' })
+  getCustomerMenu(@Query('businessId', ParseUUIDPipe) businessId: string) {
+    return this.menuService.findPublicMenu(businessId);
+  }
 
   @Post('categories')
   @ApiOperation({ summary: 'Create a new category' })

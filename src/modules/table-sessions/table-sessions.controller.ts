@@ -18,7 +18,7 @@ export class TableSessionsController {
   @Post('scan')
   @ApiOperation({ summary: 'Scan QR and create/rejoin active table session' })
   scan(@Body() dto: ScanSessionDto) {
-    return this.tableSessionsService.scan(dto.businessId, dto.tableId);
+    return this.tableSessionsService.scan(dto.qrCode);
   }
 
   @Public()

@@ -163,6 +163,28 @@ export class MenuService {
     }
   }
 
+  async findPublicMenu(businessId: string) {
+    return this.categoryRepository
+      .createQueryBuilder('cat')
+      .leftJoinAndSelect(
+        'cat.products',
+        'product',
+        'product.isAvailable = true AND product.deletedAt IS NULL',
+      )
+      .leftJoinAndSelect(
+        'product.modifierGroups',
+        'grp',
+        'grp.isActive = true AND grp.deletedAt IS NULL',
+      )
+      .leftJoinAndSelect('grp.modifiers', 'mod', 'mod.isActive = true')
+      .where('cat.businessId = :businessId AND cat.deletedAt IS NULL', { businessId })
+      .orderBy('cat.sortOrder', 'ASC')
+      .addOrderBy('product.sortOrder', 'ASC')
+      .addOrderBy('grp.position', 'ASC')
+      .addOrderBy('mod.position', 'ASC')
+      .getMany();
+  }
+
   async syncModifierGroups(
     businessId: string,
     productId: string,
