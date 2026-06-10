@@ -50,6 +50,7 @@ export class ModifiersService {
             groupId: savedGroup.id,
             name: modifierDto.name,
             priceAdjustment: modifierDto.priceAdjustment,
+            priceType: modifierDto.priceType ?? 'adjustment',
             position: modifierDto.position ?? index,
             isActive: true,
           }),
@@ -215,6 +216,7 @@ export class ModifiersService {
       groupId,
       name: dto.name,
       priceAdjustment: dto.priceAdjustment,
+      priceType: dto.priceType ?? 'adjustment',
       position: dto.position ?? nextPosition,
       isActive: true,
     });
@@ -250,7 +252,9 @@ export class ModifiersService {
 
     if (dto.name !== undefined) modifier.name = dto.name;
     if (dto.priceAdjustment !== undefined) modifier.priceAdjustment = dto.priceAdjustment;
+    if (dto.priceType !== undefined) modifier.priceType = dto.priceType;
     if (dto.position !== undefined) modifier.position = dto.position;
+    if (dto.isActive !== undefined) modifier.isActive = dto.isActive;
 
     return this.modifierRepository.save(modifier);
   }

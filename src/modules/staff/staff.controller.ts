@@ -18,7 +18,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import { StaffService } from './staff.service';
 import { AuthGuard } from '@nestjs/passport';
-import { BusinessOwnerGuard } from '@common/guards/business-owner.guard';
+import { BusinessAccessGuard } from '@common/guards/business-access.guard';
 import { Public } from '@common/decorators/public.decorator';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import {
@@ -48,7 +48,7 @@ export class StaffController {
 
   private setStaffCookie(res: Response, accessToken: string) {
     const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
-    res.cookie('staff_access_token', accessToken, {
+    res.cookie('access_token', accessToken, {
       httpOnly: true,
       secure: isProduction,
       sameSite: 'strict',
@@ -59,7 +59,7 @@ export class StaffController {
 
   private clearStaffCookie(res: Response) {
     const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
-    res.clearCookie('staff_access_token', {
+    res.clearCookie('access_token', {
       httpOnly: true,
       secure: isProduction,
       sameSite: 'strict',
@@ -70,7 +70,7 @@ export class StaffController {
   // ── Creation (owner-only) ─────────────────────────────────────────────────
 
   @Post('businesses/:businessId/staff/invite')
-  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create staff member and send invite email' })
   @ApiResponse({ status: 201, description: 'Invite sent successfully' })
@@ -85,7 +85,7 @@ export class StaffController {
   }
 
   @Post('businesses/:businessId/staff/pin')
-  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create staff member with PIN authentication' })
   @ApiResponse({ status: 201, description: 'Staff created successfully' })
@@ -100,7 +100,7 @@ export class StaffController {
   }
 
   @Post('businesses/:businessId/staff/password')
-  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create staff member with password authentication' })
   @ApiResponse({ status: 201, description: 'Staff created successfully' })
@@ -137,7 +137,7 @@ export class StaffController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.staffService.loginWithPin(businessId, dto.staffId, dto.pin);
-    this.setStaffCookie(res, result.accessToken);
+    this.setStaffCookie(res, result.tokens.accessToken);
     return result;
   }
 
@@ -152,8 +152,8 @@ export class StaffController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.staffService.loginWithPassword(dto.email, dto.password, businessId);
-    if (result.accessToken) {
-      this.setStaffCookie(res, result.accessToken);
+    if ('tokens' in result) {
+      this.setStaffCookie(res, result.tokens.accessToken);
     }
     return result;
   }
@@ -173,14 +173,20 @@ export class StaffController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Change staff password' })
   @ApiResponse({ status: 200, description: 'Password changed successfully' })
-  async changePassword(@Req() req: StaffJwtRequest, @Body() dto: ChangePasswordDto) {
-    return this.staffService.changePassword(req.user.staffId, dto);
+  async changePassword(
+    @Req() req: StaffJwtRequest,
+    @Body() dto: ChangePasswordDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.staffService.changePassword(req.user.staffId, dto);
+    this.clearStaffCookie(res);
+    return result;
   }
 
   // ── CRUD (owner-only) ─────────────────────────────────────────────────────
 
   @Get('businesses/:businessId/staff')
-  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all staff for a business' })
   async findAll(@Param('businessId') businessId: string) {
@@ -188,7 +194,7 @@ export class StaffController {
   }
 
   @Get('businesses/:businessId/staff/:staffId')
-  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get a specific staff member' })
   async findOne(@Param('businessId') businessId: string, @Param('staffId') staffId: string) {
@@ -196,7 +202,7 @@ export class StaffController {
   }
 
   @Patch('businesses/:businessId/staff/:staffId')
-  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update staff details' })
   async update(
@@ -208,7 +214,7 @@ export class StaffController {
   }
 
   @Delete('businesses/:businessId/staff/:staffId')
-  @UseGuards(AuthGuard('jwt'), BusinessOwnerGuard)
+  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a staff member' })
   async remove(@Param('businessId') businessId: string, @Param('staffId') staffId: string) {

@@ -5,6 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { User } from '@modules/users/entities/user.entity';
 import { BusinessModule } from '@modules/business/business.module';
+import { Business } from '@modules/business/entities/business.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
@@ -17,7 +18,7 @@ import { StaffOnlyGuard } from './guards/staff-only.guard';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Staff]),
+    TypeOrmModule.forFeature([User, Staff, Business]),
     BusinessModule,
     PassportModule.register({
       defaultStrategy: 'jwt',

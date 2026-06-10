@@ -68,6 +68,21 @@ export class OrderTransitionService {
     }
   }
 
+  assertKitchenTransitionPermission(role: StaffRole | null | undefined, next: OrderStatus): void {
+    if (role !== StaffRole.KITCHEN) return;
+
+    const allowed: OrderStatus[] = [
+      OrderStatus.IN_KITCHEN,
+      OrderStatus.READY,
+      OrderStatus.DELIVERED,
+    ];
+    if (!allowed.includes(next)) {
+      throw new ForbiddenException(
+        'Kitchen staff may only advance orders to In Kitchen, Ready, or Delivered',
+      );
+    }
+  }
+
   assertCancellationPermission(role: StaffRole | null | undefined, current: OrderStatus): void {
     if (current === OrderStatus.CLOSED || current === OrderStatus.REFUNDED) {
       throw new ForbiddenException('Closed or refunded orders cannot be cancelled');

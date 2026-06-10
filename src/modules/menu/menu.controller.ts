@@ -1,7 +1,25 @@
-import { Controller, Get, Post, Put, Body, Patch, Param, Delete, Query, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  Query,
+  ParseUUIDPipe,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { MenuService } from './menu.service';
-import { CreateCategoryDto, UpdateCategoryDto, CreateProductDto, SyncModifierGroupsDto } from './dto/menu.dto';
+import {
+  CreateCategoryDto,
+  UpdateCategoryDto,
+  CreateProductDto,
+  SyncModifierGroupsDto,
+  UpdateProductAvailabilityDto,
+} from './dto/menu.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { Roles } from '@common/decorators/roles.decorator';
@@ -33,12 +51,14 @@ export class MenuController {
     return this.menuService.createCategory(businessId, dto);
   }
 
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.KITCHEN)
   @Get('categories')
   @ApiOperation({ summary: 'Get all categories for the business' })
   findAllCategories(@Tenant(true) businessId: string) {
     return this.menuService.findAllCategories(businessId);
   }
 
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.KITCHEN)
   @Get('categories/:id')
   @ApiOperation({ summary: 'Get a single category' })
   findCategory(@Tenant(true) businessId: string, @Param('id') id: string) {
@@ -68,12 +88,14 @@ export class MenuController {
     return this.menuService.createProduct(businessId, dto);
   }
 
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.KITCHEN)
   @Get('products')
   @ApiOperation({ summary: 'Get all products for the business' })
   findAllProducts(@Tenant(true) businessId: string) {
     return this.menuService.findAllProducts(businessId);
   }
 
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.KITCHEN)
   @Get('products/:id')
   @ApiOperation({ summary: 'Get a single product' })
   findProduct(@Tenant(true) businessId: string, @Param('id') id: string) {
@@ -88,6 +110,17 @@ export class MenuController {
     @Body() dto: Partial<CreateProductDto>,
   ) {
     return this.menuService.updateProduct(businessId, id, dto);
+  }
+
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.KITCHEN)
+  @Patch('products/:id/availability')
+  @ApiOperation({ summary: 'Toggle product availability (kitchen staff can use this)' })
+  updateProductAvailability(
+    @Tenant(true) businessId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateProductAvailabilityDto,
+  ) {
+    return this.menuService.updateProductAvailability(businessId, id, dto.isAvailable);
   }
 
   @Delete('products/:id')

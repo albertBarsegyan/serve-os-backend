@@ -16,6 +16,7 @@ import { BusinessService } from './business.service';
 import { CreateBusinessDto, UpdateBusinessDto, UpsertPaymentMethodDto } from './dto/business.dto';
 import { Roles } from '@common/decorators/roles.decorator';
 import { Role } from '@common/enums/role.enum';
+import { StaffRole } from '@common/enums/staff-role.enum';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import type { Response } from 'express';
@@ -68,7 +69,6 @@ export class BusinessController {
     return this.businessService.findAll(authPayload);
   }
 
-  @Roles(Role.OWNER)
   @UseGuards(UnifiedAuthGuard)
   @Get(':id')
   @ApiOperation({ summary: 'Get a business by ID' })
@@ -78,7 +78,7 @@ export class BusinessController {
     return this.businessService.findOne(id, authPayload);
   }
 
-  @Roles(Role.OWNER)
+  @Roles(Role.OWNER, StaffRole.MANAGER)
   @UseGuards(UnifiedAuthGuard)
   @Patch(':id')
   @ApiOperation({ summary: 'Update a business' })

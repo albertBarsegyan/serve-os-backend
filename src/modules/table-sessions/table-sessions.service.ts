@@ -74,6 +74,25 @@ export class TableSessionsService {
     };
   }
 
+  async findOrCreateForTable(businessId: string, tableId: string): Promise<TableSession> {
+    let session = await this.tableSessionRepository.findOne({
+      where: { businessId, tableId, isActive: true },
+      order: { openedAt: 'DESC' },
+    });
+
+    session ??= await this.tableSessionRepository.save(
+      this.tableSessionRepository.create({
+        businessId,
+        tableId,
+        sessionToken: uuid(),
+        isActive: true,
+        closedAt: null,
+      }),
+    );
+
+    return session;
+  }
+
   async getActiveByToken(sessionToken: string): Promise<TableSession> {
     const session = await this.tableSessionRepository.findOne({
       where: { sessionToken, isActive: true },

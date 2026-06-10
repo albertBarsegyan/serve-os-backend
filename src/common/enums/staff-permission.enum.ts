@@ -30,6 +30,7 @@ export enum StaffPermission {
   // Menu
   MENU_VIEW = 'menu_view',
   MENU_EDIT = 'menu_edit',
+  MENU_AVAILABILITY = 'menu_availability',
 }
 
 export const ROLE_PERMISSION_MAP: Record<StaffRole, StaffPermission[]> = {
@@ -52,6 +53,7 @@ export const ROLE_PERMISSION_MAP: Record<StaffRole, StaffPermission[]> = {
     StaffPermission.KITCHEN_VIEW,
     StaffPermission.KITCHEN_UPDATE,
     StaffPermission.MENU_VIEW,
+    StaffPermission.MENU_AVAILABILITY,
   ],
 
   [StaffRole.CASHIER]: [

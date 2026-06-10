@@ -10,6 +10,7 @@ import { stringToCommaSeparated } from '@common/utils/string.utils';
 import { User } from '@modules/users/entities/user.entity';
 import { AuthPayload } from '@modules/auth/types/auth-payload.type';
 import { updateFeatures } from '@common/utils/business-feature.utils';
+import { StaffRole } from '@common/enums/staff-role.enum';
 
 @Injectable()
 export class BusinessService {
@@ -113,34 +114,39 @@ export class BusinessService {
     payload: AuthPayload,
     updateBusinessDto: UpdateBusinessDto,
   ): Promise<Business> {
-    // Only owners can update businesses
-    if (payload.type !== 'owner') {
-      throw new ForbiddenException('Only owners can update businesses');
+    if (payload.type === 'staff') {
+      if (payload.role !== StaffRole.MANAGER) {
+        throw new ForbiddenException('Insufficient permissions to update business settings');
+      }
+      if (payload.businessId !== id) {
+        throw new ForbiddenException('You do not have access to this business');
+      }
+    } else if (payload.type !== 'owner') {
+      throw new ForbiddenException('Insufficient permissions to update business settings');
     }
 
-    const ownedBusiness = await this.businessRepository.findOne({
-      where: { id, ownerId: payload.userId },
-    });
+    const business = await this.businessRepository.findOne(
+      payload.type === 'owner' ? { where: { id, ownerId: payload.userId } } : { where: { id } },
+    );
 
-    if (!ownedBusiness) {
+    if (!business) {
       throw new NotFoundException(`Business with ID ${id} not found`);
     }
 
-    const nextType = updateBusinessDto.type ?? ownedBusiness.type;
+    const nextType = updateBusinessDto.type ?? business.type;
     const updatePayload: UpdateBusinessDto = { ...updateBusinessDto };
 
     if (updateBusinessDto.features) {
       updatePayload.features = updateFeatures(
         {
-          features: updateBusinessDto.type
-            ? (FEATURE_PRESETS[nextType] ?? [])
-            : ownedBusiness.features,
+          features: updateBusinessDto.type ? (FEATURE_PRESETS[nextType] ?? []) : business.features,
         },
         updateBusinessDto.features,
       );
     }
 
-    await this.businessRepository.update({ id, ownerId: payload.userId }, updatePayload);
+    const whereClause = payload.type === 'owner' ? { id, ownerId: payload.userId } : { id };
+    await this.businessRepository.update(whereClause, updatePayload);
     return this.findOne(id, payload);
   }
 

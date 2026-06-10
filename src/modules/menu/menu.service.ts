@@ -92,6 +92,7 @@ export class MenuService {
       prepTimeMinutes: dto.prepTimeMinutes ?? undefined,
       availablePeriod: dto.availablePeriod ?? undefined,
       sortOrder: dto.sortOrder ?? undefined,
+      isAvailable: dto.isAvailable ?? undefined,
       isFeatured: dto.isFeatured ?? undefined,
       dietaryFlags: dto.dietaryFlags ? dto.dietaryFlags.map(String) : undefined,
       allergens: dto.allergens ? dto.allergens.map(String) : undefined,
@@ -141,6 +142,7 @@ export class MenuService {
     if (dto.prepTimeMinutes !== undefined) updateData.prepTimeMinutes = dto.prepTimeMinutes;
     if (dto.availablePeriod !== undefined) updateData.availablePeriod = dto.availablePeriod;
     if (dto.sortOrder !== undefined) updateData.sortOrder = dto.sortOrder;
+    if (dto.isAvailable !== undefined) updateData.isAvailable = dto.isAvailable;
     if (dto.isFeatured !== undefined) updateData.isFeatured = dto.isFeatured;
     if (dto.dietaryFlags !== undefined) updateData.dietaryFlags = dto.dietaryFlags.map(String);
     if (dto.allergens !== undefined) updateData.allergens = dto.allergens.map(String);
@@ -153,6 +155,19 @@ export class MenuService {
     }
 
     await this.productRepository.update({ id, businessId }, updateData as Business);
+    return this.findProduct(businessId, id);
+  }
+
+  async updateProductAvailability(
+    businessId: string,
+    id: string,
+    isAvailable: boolean,
+  ): Promise<Product> {
+    const product = await this.productRepository.findOne({ where: { id, businessId } });
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+    await this.productRepository.update({ id, businessId }, { isAvailable });
     return this.findProduct(businessId, id);
   }
 

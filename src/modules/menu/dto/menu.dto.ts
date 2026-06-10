@@ -121,6 +121,11 @@ export class CreateProductDto {
   @IsNumber()
   sortOrder?: number;
 
+  @ApiProperty({ example: true, required: false })
+  @IsOptional()
+  @IsBoolean()
+  isAvailable?: boolean;
+
   @ApiProperty({ example: false, required: false })
   @IsOptional()
   @IsBoolean()
@@ -156,6 +161,12 @@ export class CreateProductDto {
 }
 
 export class UpdateProductDto extends PartialType(CreateProductDto) {}
+
+export class UpdateProductAvailabilityDto {
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  isAvailable: boolean;
+}
 
 export class SyncModifierGroupsDto {
   @ApiProperty({ type: [String], description: 'Modifier group IDs to attach to the product' })

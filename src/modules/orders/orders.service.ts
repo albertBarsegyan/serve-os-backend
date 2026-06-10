@@ -15,6 +15,7 @@ import { Table } from '@modules/tables/entities/table.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
 import { TableSessionsService } from '@modules/table-sessions/table-sessions.service';
 import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
+import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
 import { OrderItemModifier } from '@modules/modifiers/entities/order-item-modifier.entity';
 import { OrderStatus } from './entities/order-status.enum';
 import { OrderType } from './entities/order-type.enum';
@@ -152,6 +153,100 @@ export class OrdersService {
     return this.createFromQr(dto);
   }
 
+  async createFromStaff(
+    businessId: string,
+    dto: CreateStaffOrderDto,
+    staffId?: string,
+  ): Promise<Order> {
+    let tableSessionId: string | null = null;
+    let tableId: string | null = null;
+
+    if (dto.type === OrderType.DINE_IN) {
+      if (!dto.tableId) {
+        throw new BadRequestException('tableId is required for DINE_IN orders');
+      }
+      const session = await this.tableSessionsService.findOrCreateForTable(businessId, dto.tableId);
+      tableSessionId = session.id;
+      tableId = dto.tableId;
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      let totalAmount = 0;
+      const orderItems: OrderItem[] = [];
+
+      for (const itemDto of dto.items) {
+        const product = await queryRunner.manager.findOne(Product, {
+          where: { id: itemDto.productId, businessId },
+        });
+
+        if (!product) {
+          throw new NotFoundException(`Product with ID ${itemDto.productId} not found`);
+        }
+
+        const modifiers = itemDto.selectedModifiers ?? [];
+        const modifierPrice = modifiers.reduce((sum, m) => sum + Number(m.priceAdjustment), 0);
+        const unitPrice = Number(product.price) + modifierPrice;
+        totalAmount += unitPrice * itemDto.quantity;
+
+        const orderItem = queryRunner.manager.create(OrderItem, {
+          productId: product.id,
+          quantity: itemDto.quantity,
+          unitPrice,
+          notes: itemDto.notes,
+          selectedModifiers: modifiers.map((m) =>
+            queryRunner.manager.create(OrderItemModifier, {
+              modifierId: m.modifierId,
+              modifierName: m.name,
+              priceAdjustment: m.priceAdjustment,
+            }),
+          ),
+        });
+        orderItems.push(orderItem);
+      }
+
+      const order = queryRunner.manager.create(Order, {
+        businessId,
+        type: dto.type,
+        status: OrderStatus.CREATED,
+        tableId,
+        tableSessionId,
+        totalAmount,
+        customerName: dto.customerName ?? null,
+        notes: dto.notes ?? null,
+        waiterId: staffId ?? null,
+      });
+
+      const savedOrder = await queryRunner.manager.save(order);
+
+      for (const item of orderItems) {
+        item.order = savedOrder;
+      }
+
+      await queryRunner.manager.save(orderItems);
+      await queryRunner.commitTransaction();
+
+      let createdOrder = (await this.orderRepository.findOne({
+        where: { id: savedOrder.id },
+        relations: ['items', 'items.product', 'items.product.kitchenStation', 'table'],
+      })) as Order;
+
+      this.emitTransitionEvent(createdOrder, OrderStatus.CREATED);
+      createdOrder = await this.transitionOrder(createdOrder, OrderStatus.CONFIRMED);
+      createdOrder = await this.transitionOrder(createdOrder, OrderStatus.IN_KITCHEN);
+
+      return createdOrder;
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async findAll(businessId: string): Promise<Order[]> {
     return this.orderRepository.find({
       where: { businessId },
@@ -184,6 +279,8 @@ export class OrdersService {
     if (dto.status === OrderStatus.CANCELLED) {
       this.orderTransitionService.assertCancellationPermission(actorRole, order.status);
     }
+
+    this.orderTransitionService.assertKitchenTransitionPermission(actorRole, dto.status);
 
     return this.transitionOrder(order, dto.status);
   }

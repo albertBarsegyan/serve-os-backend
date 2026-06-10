@@ -9,6 +9,7 @@ import { Public } from '@common/decorators/public.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { AuthUser } from '@common/decorators/auth-user.decorator';
 import { Role } from '@common/enums/role.enum';
+import { StaffRole } from '@common/enums/staff-role.enum';
 
 @ApiTags('Payments')
 @ApiBearerAuth()
@@ -25,14 +26,14 @@ export class PaymentsController {
     return this.paymentsService.create(businessId, dto);
   }
 
-  @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Get()
   @ApiOperation({ summary: 'Get all payments for the business' })
   findAll(@Tenant(true) businessId: string) {
     return this.paymentsService.findAll(businessId);
   }
 
-  @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Patch(':id/confirm')
   @ApiOperation({ summary: 'Confirm a payment (Staff only)' })
   @ApiResponse({ status: 200, description: 'Payment confirmed' })

@@ -11,10 +11,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
         (req: Request) => {
-          const typedReq = req as {
-            cookies?: { access_token?: string; staff_access_token?: string };
-          };
-          return typedReq.cookies?.access_token ?? typedReq.cookies?.staff_access_token ?? null;
+          const typedReq = req as { cookies?: { access_token?: string } };
+          return typedReq.cookies?.access_token ?? null;
         },
 
         ExtractJwt.fromAuthHeaderAsBearerToken(),

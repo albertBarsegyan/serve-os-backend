@@ -4,6 +4,7 @@ import {
   Body,
   UseGuards,
   Get,
+  Query,
   Req,
   Res,
   HttpCode,
@@ -16,7 +17,7 @@ import { type Request as ExpressRequest, type Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { BusinessService } from '@modules/business/business.service';
-import { LoginDto, RegisterDto } from './dto/auth.dto';
+import { LoginDto, RegisterDto, SlugStaffLoginDto } from './dto/auth.dto';
 import { Public } from '@common/decorators/public.decorator';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
@@ -28,6 +29,7 @@ import { ErrorResponseDto } from '@common/dto/error-response.dto';
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const STAFF_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -67,6 +69,44 @@ export class AuthController {
     const base = this.getCookieBase();
     res.clearCookie('access_token', { ...base, path: '/' });
     res.clearCookie('refresh_token', { ...base, path: '/api/auth/refresh' });
+  }
+
+  private setStaffAccessCookie(res: Response, accessToken: string) {
+    const base = this.getCookieBase();
+    res.cookie('access_token', accessToken, {
+      ...base,
+      path: '/',
+      maxAge: STAFF_TOKEN_TTL_MS,
+    });
+  }
+
+  @Public()
+  @AllowWithoutBusiness()
+  @Get('staff/roster')
+  @ApiOperation({ summary: 'Get staff roster for a business by slug' })
+  @ApiResponse({
+    status: 200,
+    description: 'Business name + list of active staff (id, displayName, role only)',
+  })
+  @ApiResponse({ status: 404, description: 'Business slug not found or inactive' })
+  async staffRoster(@Query('slug') slug: string) {
+    return this.authService.getStaffRoster(slug);
+  }
+
+  @Public()
+  @AllowWithoutBusiness()
+  @Post('staff/login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Staff login by slug — PIN (staffId + pin) or email + password' })
+  @ApiResponse({ status: 200, description: 'Login successful; sets access_token cookie' })
+  @ApiResponse({ status: 401, description: 'Invalid credentials (slug, staff, or secret)' })
+  async staffLoginBySlug(
+    @Body() dto: SlugStaffLoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.loginStaffBySlug(dto.slug, dto.identifier, dto.secret);
+    this.setStaffAccessCookie(res, result.tokens.accessToken);
+    return result;
   }
 
   @Public()

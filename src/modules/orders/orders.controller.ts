@@ -24,6 +24,7 @@ import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
+import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
 import { ProcessPaymentDto } from './dto/process-payment.dto';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 
@@ -44,6 +45,23 @@ export class OrdersController {
     @Headers('x-session-token') headerSessionToken?: string,
   ) {
     return this.ordersService.createFromQr(dto, headerSessionToken);
+  }
+
+  @RequireBusinessFeature(
+    [BusinessFeature.ORDER_DINE_IN, BusinessFeature.ORDER_TAKEAWAY, BusinessFeature.ORDER_DELIVERY],
+    'any',
+  )
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER)
+  @Post('staff')
+  @ApiOperation({ summary: 'Create an order on behalf of a customer (staff-initiated)' })
+  @ApiResponse({ status: 201, description: 'Order successfully created' })
+  createFromStaff(
+    @Tenant(true) businessId: string,
+    @Body() dto: CreateStaffOrderDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const staffId = req.user?.type === 'staff' ? req.user.staffId : undefined;
+    return this.ordersService.createFromStaff(businessId, dto, staffId);
   }
 
   @RequireBusinessFeature(
@@ -72,7 +90,7 @@ export class OrdersController {
     [BusinessFeature.ORDER_DINE_IN, BusinessFeature.ORDER_TAKEAWAY, BusinessFeature.ORDER_DELIVERY],
     'any',
   )
-  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER, StaffRole.KITCHEN)
   @Patch(':id/status')
   @ApiOperation({ summary: 'Update order status' })
   @ApiResponse({ status: 200, description: 'Status updated' })

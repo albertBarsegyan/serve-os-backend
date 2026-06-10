@@ -34,7 +34,7 @@ export class StaffJwtStrategy extends PassportStrategy(Strategy, 'staff-jwt') {
     super({
       jwtFromRequest: (req: Request) => {
         const cookies = (req as Request & { cookies?: Record<string, string> }).cookies;
-        const fromCookie = cookies?.['staff_access_token'] as string;
+        const fromCookie = (cookies?.['access_token'] ?? cookies?.['staff_access_token']) as string;
         if (fromCookie) return fromCookie;
         const fromHeader = ExtractJwt.fromAuthHeaderAsBearerToken()(req);
         return fromHeader || null;

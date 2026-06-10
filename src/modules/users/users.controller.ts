@@ -19,10 +19,7 @@ export class UsersController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update current user profile' })
   @ApiResponse({ status: 200, description: 'Profile updated' })
-  async updateProfile(
-    @GetAuthPayload() payload: OwnerPayload,
-    @Body() dto: UpdateUserDto,
-  ) {
+  async updateProfile(@GetAuthPayload() payload: OwnerPayload, @Body() dto: UpdateUserDto) {
     const user = await this.usersService.updateProfile(payload.userId, dto);
     return {
       id: user.id,
@@ -37,10 +34,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Change current user password' })
   @ApiResponse({ status: 200, description: 'Password changed' })
   @ApiResponse({ status: 401, description: 'Current password is incorrect' })
-  async changePassword(
-    @GetAuthPayload() payload: OwnerPayload,
-    @Body() dto: ChangePasswordDto,
-  ) {
+  async changePassword(@GetAuthPayload() payload: OwnerPayload, @Body() dto: ChangePasswordDto) {
     await this.usersService.changePassword(payload.userId, dto);
     return { message: 'Password changed successfully' };
   }

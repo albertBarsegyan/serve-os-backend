@@ -86,6 +86,12 @@ export class Order {
   @Column({ nullable: true, type: 'text' })
   externalOrderId: string | null;
 
+  @Column({ nullable: true, type: 'text' })
+  customerName: string | null;
+
+  @Column({ nullable: true, type: 'text' })
+  notes: string | null;
+
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   tipAmount: number;
 

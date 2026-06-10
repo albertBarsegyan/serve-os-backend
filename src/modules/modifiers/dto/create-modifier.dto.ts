@@ -1,4 +1,4 @@
-import { IsBoolean, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateModifierItemDto {
   @IsString()
@@ -7,6 +7,11 @@ export class CreateModifierItemDto {
   @IsNumber()
   @Min(0)
   priceAdjustment: number;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['adjustment', 'fixed'])
+  priceType?: string;
 
   @IsOptional()
   @IsNumber()

@@ -7,6 +7,9 @@ import { ScanSessionDto } from './dto/scan-session.dto';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import { Req } from '@nestjs/common/decorators/http/route-params.decorator';
+import { Roles } from '@common/decorators/roles.decorator';
+import { Role } from '@common/enums/role.enum';
+import { StaffRole } from '@common/enums/staff-role.enum';
 
 @ApiTags('Table Sessions')
 @Controller('sessions')
@@ -31,6 +34,7 @@ export class TableSessionsController {
 
   @ApiBearerAuth()
   @UseGuards(TenantGuard)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER)
   @Post(':id/close')
   @ApiOperation({ summary: 'Close table session when all orders are settled' })
   close(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthenticatedRequest) {

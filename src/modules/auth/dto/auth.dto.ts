@@ -12,6 +12,26 @@ export class LoginDto {
   password: string;
 }
 
+export class SlugStaffLoginDto {
+  @ApiProperty({ example: 'my-restaurant', description: 'Business slug' })
+  @IsString()
+  @IsNotEmpty()
+  slug: string;
+
+  @ApiProperty({
+    example: 'uuid-staff-id or staff@example.com',
+    description: 'Staff ID (PIN flow) or email (password flow)',
+  })
+  @IsString()
+  @IsNotEmpty()
+  identifier: string;
+
+  @ApiProperty({ example: '1234 or password', description: 'PIN or password' })
+  @IsString()
+  @IsNotEmpty()
+  secret: string;
+}
+
 /**
  * RegisterDto - handles user registration
  * Note: role is intentionally excluded and always defaults to Role.OWNER

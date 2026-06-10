@@ -10,6 +10,7 @@ import { Public } from '@common/decorators/public.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
 import { Role } from '@common/enums/role.enum';
+import { StaffRole } from '@common/enums/staff-role.enum';
 
 @ApiTags('Tables')
 @ApiBearerAuth()
@@ -18,7 +19,7 @@ import { Role } from '@common/enums/role.enum';
 export class TablesController {
   constructor(private readonly tablesService: TablesService) {}
 
-  @Roles(Role.OWNER, Role.ADMIN)
+  @Roles(Role.OWNER, StaffRole.MANAGER)
   @RequirePermission(BusinessFeature.TABLES, 'create')
   @Post()
   @ApiOperation({ summary: 'Create a new table' })
@@ -27,7 +28,7 @@ export class TablesController {
     return this.tablesService.create(businessId, dto);
   }
 
-  @Roles(Role.OWNER, Role.ADMIN, Role.WAITER)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @RequirePermission(BusinessFeature.TABLES, 'read')
   @Get()
   @ApiOperation({ summary: 'Get all tables for the business' })
@@ -44,7 +45,7 @@ export class TablesController {
     return this.tablesService.findByQrCode(qrCode);
   }
 
-  @Roles(Role.OWNER, Role.ADMIN)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @RequirePermission(BusinessFeature.TABLES, 'read')
   @Get(':id')
   @ApiOperation({ summary: 'Get a table by ID' })
@@ -52,7 +53,7 @@ export class TablesController {
     return this.tablesService.findOne(businessId, id);
   }
 
-  @Roles(Role.OWNER, Role.ADMIN)
+  @Roles(Role.OWNER, StaffRole.MANAGER)
   @RequirePermission(BusinessFeature.TABLES, 'update')
   @Patch(':id')
   @ApiOperation({ summary: 'Update a table' })
@@ -64,7 +65,7 @@ export class TablesController {
     return this.tablesService.update(businessId, id, dto);
   }
 
-  @Roles(Role.OWNER, Role.ADMIN)
+  @Roles(Role.OWNER, StaffRole.MANAGER)
   @RequirePermission(BusinessFeature.TABLES, 'delete')
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a table' })

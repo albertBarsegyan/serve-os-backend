@@ -3,6 +3,7 @@ import {
   WebSocketServer,
   SubscribeMessage,
   MessageBody,
+  ConnectedSocket,
   OnGatewayConnection,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
@@ -30,20 +31,20 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   }
 
   @SubscribeMessage('join-kitchen')
-  async handleJoinKitchen(client: Socket, @MessageBody() businessId: string) {
+  async handleJoinKitchen(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
     await client.join(`kitchen:${businessId}`);
     this.logger.debug({ clientId: client.id, businessId }, 'Kitchen client joined room');
     return { event: 'joined', data: businessId };
   }
 
   @SubscribeMessage('join-business')
-  async handleJoinBusiness(client: Socket, @MessageBody() businessId: string) {
+  async handleJoinBusiness(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
     await client.join(`business:${businessId}`);
     return { event: 'joined', data: businessId };
   }
 
   @SubscribeMessage('join-session')
-  async handleJoinSession(client: Socket, @MessageBody() sessionToken: string) {
+  async handleJoinSession(@ConnectedSocket() client: Socket, @MessageBody() sessionToken: string) {
     await client.join(`session:${sessionToken}`);
     return { event: 'joined', data: sessionToken };
   }

@@ -29,6 +29,9 @@ export class Modifier {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   priceAdjustment: number;
 
+  @Column({ default: 'adjustment' })
+  priceType: string;
+
   @Column({ default: 0 })
   position: number;
 

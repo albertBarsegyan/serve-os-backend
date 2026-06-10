@@ -6,6 +6,9 @@ import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { Staff } from './entities/staff.entity';
 import { StaffAuthType } from '@common/enums/staff-auth-type.enum';
+import { ROLE_PERMISSION_MAP, StaffPermission } from '@common/enums/staff-permission.enum';
+import { BusinessFeature } from '@common/enums/business-feature.enum';
+import { StaffRole } from '@common/enums/staff-role.enum';
 import { EmailService } from '@common/services/email.service';
 import {
   AcceptInviteDto,
@@ -15,6 +18,21 @@ import {
   CreateStaffWithPinDto,
   UpdateStaffDto,
 } from './dto';
+
+export interface StaffAuthUser {
+  type: 'staff';
+  staffId: string;
+  displayName: string;
+  email: string | null;
+  businessId: string;
+  role: StaffRole;
+  permissions: StaffPermission[];
+  business: { features: BusinessFeature[] };
+}
+
+export interface StaffTokenPair {
+  accessToken: string;
+}
 
 @Injectable()
 export class StaffService {
@@ -154,7 +172,7 @@ export class StaffService {
     businessId: string,
     staffId: string,
     pin: string,
-  ): Promise<{ accessToken: string }> {
+  ): Promise<{ tokens: StaffTokenPair; user: StaffAuthUser }> {
     const staff = await this.staffRepository.findOne({
       where: {
         id: staffId,
@@ -162,6 +180,7 @@ export class StaffService {
         authType: StaffAuthType.PIN,
         isActive: true,
       },
+      relations: { business: true },
     });
 
     if (!staff) {
@@ -172,13 +191,11 @@ export class StaffService {
       throw new BadRequestException('PIN not set for this staff member');
     }
 
-    // Compare PIN with bcrypt
     const isValidPin = await bcrypt.compare(pin, staff.pin);
     if (!isValidPin) {
       throw new BadRequestException('Invalid PIN');
     }
 
-    // Generate JWT
     const payload = {
       staffId: staff.id,
       businessId: staff.businessId,
@@ -187,11 +204,9 @@ export class StaffService {
       type: 'staff' as const,
     };
 
-    const accessToken = this.jwtService.sign(payload, {
-      expiresIn: '24h',
-    });
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '24h' });
 
-    return { accessToken };
+    return { tokens: { accessToken }, user: this.buildStaffUser(staff) };
   }
 
   /**
@@ -201,13 +216,17 @@ export class StaffService {
     email: string,
     password: string,
     businessId: string,
-  ): Promise<{ accessToken?: string; requiresPasswordChange?: boolean; staffId?: string }> {
+  ): Promise<
+    | { tokens: StaffTokenPair; user: StaffAuthUser }
+    | { requiresPasswordChange: true; staffId: string; tokens: StaffTokenPair }
+  > {
     const staff = await this.staffRepository.findOne({
       where: {
         email,
         businessId,
         isActive: true,
       },
+      relations: { business: true },
     });
 
     if (!staff) {
@@ -225,21 +244,23 @@ export class StaffService {
       throw new BadRequestException('Password not configured for this staff member');
     }
 
-    // Compare password with bcrypt
     const isValidPassword = await bcrypt.compare(password, staff.passwordHash);
     if (!isValidPassword) {
       throw new BadRequestException('Invalid password');
     }
 
-    // Check if password change is required
     if (staff.mustChangePassword) {
-      return {
-        requiresPasswordChange: true,
+      const tempPayload = {
         staffId: staff.id,
+        businessId: staff.businessId,
+        role: staff.role,
+        authType: staff.authType,
+        type: 'staff' as const,
       };
+      const accessToken = this.jwtService.sign(tempPayload, { expiresIn: '1h' });
+      return { requiresPasswordChange: true, staffId: staff.id, tokens: { accessToken } };
     }
 
-    // Generate JWT
     const payload = {
       staffId: staff.id,
       businessId: staff.businessId,
@@ -248,11 +269,9 @@ export class StaffService {
       type: 'staff' as const,
     };
 
-    const accessToken = this.jwtService.sign(payload, {
-      expiresIn: '24h',
-    });
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '24h' });
 
-    return { accessToken };
+    return { tokens: { accessToken }, user: this.buildStaffUser(staff) };
   }
 
   /**
@@ -278,9 +297,8 @@ export class StaffService {
     }
 
     // Hash new password
-    const hashedPassword = await bcrypt.hash(dto.newPassword, this.PIN_HASH_ROUNDS);
 
-    staff.passwordHash = hashedPassword;
+    staff.passwordHash = await bcrypt.hash(dto.newPassword, this.PIN_HASH_ROUNDS);
     staff.mustChangePassword = false;
 
     await this.staffRepository.save(staff);
@@ -308,7 +326,7 @@ export class StaffService {
    */
   async findAll(businessId: string): Promise<Staff[]> {
     return this.staffRepository.find({
-      where: { businessId, isActive: true },
+      where: { businessId },
       order: { createdAt: 'DESC' },
     });
   }
@@ -331,5 +349,18 @@ export class StaffService {
     if (result.affected === 0) {
       throw new NotFoundException(`Staff with ID ${staffId} not found`);
     }
+  }
+
+  private buildStaffUser(staff: Staff): StaffAuthUser {
+    return {
+      type: 'staff',
+      staffId: staff.id,
+      displayName: staff.displayName,
+      email: staff.email,
+      businessId: staff.businessId,
+      role: staff.role,
+      permissions: ROLE_PERMISSION_MAP[staff.role],
+      business: { features: staff.business?.features ?? [] },
+    };
   }
 }

@@ -1,10 +1,16 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
 import { User } from '@modules/users/entities/user.entity';
+import { Business } from '@modules/business/entities/business.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 import { AuthPayload, OwnerPayload, StaffPayload } from './types/auth-payload.type';
@@ -49,6 +55,8 @@ export class AuthService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Staff)
     private readonly staffRepository: Repository<Staff>,
+    @InjectRepository(Business)
+    private readonly businessRepository: Repository<Business>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly logger: PinoLogger,
@@ -235,17 +243,97 @@ export class AuthService {
       throw new UnauthorizedException('Staff account is inactive');
     }
 
+    return { user: this.buildStaffUser(staff) };
+  }
+
+  async getStaffRoster(slug: string): Promise<{
+    business: { name: string; slug: string };
+    staff: { id: string; displayName: string; role: StaffRole }[];
+  }> {
+    const business = await this.businessRepository.findOne({
+      where: { slug, isActive: true },
+      relations: { staff: true },
+    });
+
+    if (!business) {
+      throw new NotFoundException('Business not found');
+    }
+
+    const activeStaff = (business.staff ?? [])
+      .filter((s) => s.isActive)
+      .map((s) => ({ id: s.id, displayName: s.displayName, role: s.role, authType: s.authType }));
+
+    return { business: { name: business.name, slug: business.slug }, staff: activeStaff };
+  }
+
+  async loginStaffBySlug(
+    slug: string,
+    identifier: string,
+    secret: string,
+  ): Promise<{ tokens: { accessToken: string }; user: StaffAuthUser; requiresPasswordChange?: true }> {
+    const business = await this.businessRepository.findOne({
+      where: { slug, isActive: true },
+    });
+
+    if (!business) {
+      this.logger.warn({ slug }, 'loginStaffBySlug: slug not found');
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier);
+    const staff = await this.staffRepository.findOne({
+      where: isUuid
+        ? { businessId: business.id, id: identifier, isActive: true }
+        : { businessId: business.id, email: identifier, isActive: true },
+      relations: { business: true },
+    });
+
+    if (!staff) {
+      this.logger.warn({ slug, identifier }, 'loginStaffBySlug: staff not found');
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const pinOk = staff.pin ? await bcrypt.compare(secret, staff.pin) : false;
+    const passwordOk =
+      !pinOk && staff.passwordHash ? await bcrypt.compare(secret, staff.passwordHash) : false;
+
+    if (!pinOk && !passwordOk) {
+      this.logger.warn({ slug, staffId: staff.id }, 'loginStaffBySlug: secret mismatch');
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const payload: StaffPayload = {
+      type: 'staff',
+      staffId: staff.id,
+      businessId: staff.businessId,
+      role: staff.role,
+    };
+
+    if (staff.mustChangePassword) {
+      const accessToken = await this.jwtService.signAsync(payload, { expiresIn: '1h' });
+      this.logger.info({ staffId: staff.id }, 'Staff authenticated but must change password');
+      return { requiresPasswordChange: true, tokens: { accessToken }, user: this.buildStaffUser(staff) };
+    }
+
+    const accessToken = await this.jwtService.signAsync(payload, { expiresIn: '24h' });
+    this.logger.info(
+      { staffId: staff.id, businessId: staff.businessId },
+      'Staff authenticated via slug',
+    );
+
+    return { tokens: { accessToken }, user: this.buildStaffUser(staff) };
+  }
+
+  private buildStaffUser(staff: Staff): StaffAuthUser {
     return {
-      user: {
-        type: 'staff',
-        staffId: staff.id,
-        displayName: staff.displayName,
-        email: staff.email,
-        businessId: staff.businessId,
-        role: staff.role,
-        permissions: ROLE_PERMISSION_MAP[staff.role],
-        business: { features: staff.business?.features ?? [] },
-      },
+      type: 'staff',
+      staffId: staff.id,
+      displayName: staff.displayName,
+      email: staff.email,
+      businessId: staff.businessId,
+      role: staff.role,
+      permissions: ROLE_PERMISSION_MAP[staff.role],
+      business: { features: staff.business?.features ?? [] },
     };
   }
 
