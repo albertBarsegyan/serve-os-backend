@@ -3,6 +3,8 @@ import {
   UnauthorizedException,
   ConflictException,
   NotFoundException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -31,6 +33,7 @@ export interface OwnerAuthUser {
   email: string;
   firstName: string;
   lastName: string;
+  avatarUrl: string | null;
   hasBusiness: boolean;
   role: string;
 }
@@ -39,6 +42,7 @@ export interface StaffAuthUser {
   type: 'staff';
   staffId: string;
   displayName: string;
+  avatarUrl: string | null;
   email: string | null;
   businessId: string;
   role: StaffRole;
@@ -72,6 +76,7 @@ export class AuthService {
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,
+      avatarUrl: user.avatarUrl ?? null,
       hasBusiness: user.hasBusiness,
       role: user.role,
     };
@@ -105,10 +110,14 @@ export class AuthService {
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload),
-      this.jwtService.signAsync(payload, {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
-        expiresIn: '7d',
-      }),
+      // sub is added here so jwt-refresh.strategy can read the standard JWT subject claim
+      this.jwtService.signAsync(
+        { ...payload, sub: user.id },
+        {
+          secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+          expiresIn: '7d',
+        },
+      ),
     ]);
 
     const hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
@@ -247,7 +256,7 @@ export class AuthService {
   }
 
   async getStaffRoster(slug: string): Promise<{
-    business: { name: string; slug: string };
+    business: { id: string; name: string; slug: string };
     staff: { id: string; displayName: string; role: StaffRole }[];
   }> {
     const business = await this.businessRepository.findOne({
@@ -263,14 +272,21 @@ export class AuthService {
       .filter((s) => s.isActive)
       .map((s) => ({ id: s.id, displayName: s.displayName, role: s.role, authType: s.authType }));
 
-    return { business: { name: business.name, slug: business.slug }, staff: activeStaff };
+    return {
+      business: { id: business.id, name: business.name, slug: business.slug },
+      staff: activeStaff,
+    };
   }
 
   async loginStaffBySlug(
     slug: string,
     identifier: string,
     secret: string,
-  ): Promise<{ tokens: { accessToken: string }; user: StaffAuthUser; requiresPasswordChange?: true }> {
+  ): Promise<{
+    tokens: { accessToken: string };
+    user: StaffAuthUser;
+    requiresPasswordChange?: true;
+  }> {
     const business = await this.businessRepository.findOne({
       where: { slug, isActive: true },
     });
@@ -280,7 +296,9 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier);
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      identifier,
+    );
     const staff = await this.staffRepository.findOne({
       where: isUuid
         ? { businessId: business.id, id: identifier, isActive: true }
@@ -312,7 +330,11 @@ export class AuthService {
     if (staff.mustChangePassword) {
       const accessToken = await this.jwtService.signAsync(payload, { expiresIn: '1h' });
       this.logger.info({ staffId: staff.id }, 'Staff authenticated but must change password');
-      return { requiresPasswordChange: true, tokens: { accessToken }, user: this.buildStaffUser(staff) };
+      return {
+        requiresPasswordChange: true,
+        tokens: { accessToken },
+        user: this.buildStaffUser(staff),
+      };
     }
 
     const accessToken = await this.jwtService.signAsync(payload, { expiresIn: '24h' });
@@ -329,6 +351,7 @@ export class AuthService {
       type: 'staff',
       staffId: staff.id,
       displayName: staff.displayName,
+      avatarUrl: staff.avatarUrl ?? null,
       email: staff.email,
       businessId: staff.businessId,
       role: staff.role,
@@ -385,5 +408,90 @@ export class AuthService {
   async logout(userId: string): Promise<void> {
     await this.userRepository.update(userId, { refreshToken: null });
     this.logger.info({ userId }, 'User logged out');
+  }
+
+  async lookupStaffByEmployeeId(
+    employeeId: string,
+    businessId: string,
+  ): Promise<{ id: string; displayName: string; role: StaffRole; avatarUrl: string | null }> {
+    const staff = await this.staffRepository.findOne({
+      where: { employeeId, businessId, isActive: true },
+    });
+
+    if (!staff) {
+      throw new NotFoundException('Employee ID not found');
+    }
+
+    if (staff.pinLockedUntil && staff.pinLockedUntil > new Date()) {
+      throw new HttpException({ message: 'Account locked' }, HttpStatus.LOCKED);
+    }
+
+    return {
+      id: staff.id,
+      displayName: staff.displayName,
+      role: staff.role,
+      avatarUrl: staff.avatarUrl ?? null,
+    };
+  }
+
+  async loginStaffWithPin(
+    staffId: string,
+    pin: string,
+    businessId: string,
+    ip?: string,
+  ): Promise<{ tokens: { accessToken: string }; user: StaffAuthUser }> {
+    const staff = await this.staffRepository.findOne({
+      where: { id: staffId, businessId },
+      relations: { business: true },
+    });
+
+    if (!staff) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (staff.pinLockedUntil && staff.pinLockedUntil > new Date()) {
+      throw new HttpException({ message: 'Account locked' }, HttpStatus.LOCKED);
+    }
+
+    if (!staff.pin) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const isValid = await bcrypt.compare(pin, staff.pin);
+
+    if (!isValid) {
+      const attempts = (staff.pinFailedAttempts ?? 0) + 1;
+      if (attempts >= 3) {
+        const lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+        await this.staffRepository.update(staff.id, {
+          pinFailedAttempts: attempts,
+          pinLockedUntil: lockedUntil,
+        });
+        throw new UnauthorizedException('Too many failed attempts. Account locked for 15 minutes.');
+      }
+      await this.staffRepository.update(staff.id, { pinFailedAttempts: attempts });
+      throw new UnauthorizedException(
+        `Invalid PIN. ${3 - attempts} attempt${3 - attempts === 1 ? '' : 's'} remaining.`,
+      );
+    }
+
+    await this.staffRepository.update(staff.id, {
+      pinFailedAttempts: 0,
+      pinLockedUntil: null,
+      lastLoginAt: new Date(),
+      lastLoginIp: ip ?? null,
+    });
+
+    const payload: StaffPayload = {
+      type: 'staff',
+      staffId: staff.id,
+      businessId: staff.businessId,
+      role: staff.role,
+    };
+
+    const accessToken = await this.jwtService.signAsync(payload, { expiresIn: '24h' });
+    this.logger.info({ staffId: staff.id, businessId }, 'Staff authenticated via PIN');
+
+    return { tokens: { accessToken }, user: this.buildStaffUser(staff) };
   }
 }

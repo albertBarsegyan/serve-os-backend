@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { Staff } from './entities/staff.entity';
 import { StaffAuthType } from '@common/enums/staff-auth-type.enum';
@@ -37,6 +38,22 @@ export interface StaffTokenPair {
 @Injectable()
 export class StaffService {
   private readonly PIN_HASH_ROUNDS = 10;
+  private readonly EMPLOYEE_ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+  private async generateUniqueEmployeeId(businessId: string): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const suffix = Array.from(randomBytes(6))
+        .map((b) => this.EMPLOYEE_ID_CHARS[b % this.EMPLOYEE_ID_CHARS.length])
+        .join('');
+      const candidate = `EMP-${suffix}`;
+      const existing = await this.staffRepository.findOne({
+        where: { businessId, employeeId: candidate },
+        withDeleted: true,
+      });
+      if (!existing) return candidate;
+    }
+    throw new Error('Failed to generate unique employeeId after 10 attempts');
+  }
 
   constructor(
     @InjectRepository(Staff)
@@ -60,6 +77,7 @@ export class StaffService {
 
     // Hash the PIN
     const hashedPin = await bcrypt.hash(dto.pin, this.PIN_HASH_ROUNDS);
+    const employeeId = await this.generateUniqueEmployeeId(businessId);
 
     const staff = this.staffRepository.create({
       businessId,
@@ -68,6 +86,7 @@ export class StaffService {
       role: dto.role,
       authType: StaffAuthType.PIN,
       pin: hashedPin,
+      employeeId,
       isActive: true,
     });
 
@@ -84,6 +103,7 @@ export class StaffService {
   ): Promise<Staff> {
     // Hash the temporary password
     const hashedPassword = await bcrypt.hash(dto.temporaryPassword, this.PIN_HASH_ROUNDS);
+    const employeeId = await this.generateUniqueEmployeeId(businessId);
 
     const staff = this.staffRepository.create({
       businessId,
@@ -94,6 +114,7 @@ export class StaffService {
       passwordHash: hashedPassword,
       email: dto.email || null,
       mustChangePassword: true, // Force password change on first login
+      employeeId,
       isActive: true,
     });
 
@@ -111,6 +132,7 @@ export class StaffService {
     const inviteToken = uuidv4();
     const inviteExpiresAt = new Date();
     inviteExpiresAt.setHours(inviteExpiresAt.getHours() + 72); // 72 hours from now
+    const employeeId = await this.generateUniqueEmployeeId(businessId);
 
     const staff = this.staffRepository.create({
       businessId,
@@ -121,6 +143,7 @@ export class StaffService {
       authType: StaffAuthType.INVITE_PENDING,
       inviteToken,
       inviteExpiresAt,
+      employeeId,
       isActive: true,
     });
 
@@ -335,6 +358,16 @@ export class StaffService {
     await this.findOne(staffId, businessId);
     await this.staffRepository.update({ id: staffId, businessId }, dto);
     return this.findOne(staffId, businessId);
+  }
+
+  /**
+   * Unlock a PIN-locked staff member
+   */
+  async unlockStaff(staffId: string, businessId: string): Promise<Staff> {
+    const staff = await this.findOne(staffId, businessId);
+    staff.pinLockedUntil = null;
+    staff.pinFailedAttempts = 0;
+    return this.staffRepository.save(staff);
   }
 
   /**

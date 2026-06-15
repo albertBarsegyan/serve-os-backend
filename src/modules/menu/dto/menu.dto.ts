@@ -30,6 +30,11 @@ export class CreateCategoryDto {
   @IsString()
   description?: string | null;
 
+  @ApiProperty({ example: 'https://example.com/category.webp', required: false, nullable: true })
+  @IsOptional()
+  @IsString()
+  imageUrl?: string | null;
+
   @ApiProperty({ example: 1, required: false })
   @IsOptional()
   @IsNumber()
@@ -149,7 +154,7 @@ export class CreateProductDto {
   @IsOptional()
   @IsArray()
   @ArrayUnique()
-  @IsUrl(undefined, { each: true })
+  @IsUrl({ require_tld: false }, { each: true })
   imageUrls?: string[];
 
   @ApiProperty({ type: [CreateProductVariantDto], required: false })

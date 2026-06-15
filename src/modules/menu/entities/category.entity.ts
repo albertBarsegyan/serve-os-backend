@@ -41,6 +41,9 @@ export class MenuCategory {
   @Column({ default: 0 })
   sortOrder: number;
 
+  @Column({ type: 'text', nullable: true, default: null })
+  imageUrl: string | null;
+
   @Column({ default: true })
   isActive: boolean;
 

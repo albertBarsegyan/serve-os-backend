@@ -8,6 +8,7 @@ import {
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
+  Unique,
   UpdateDateColumn,
 } from 'typeorm';
 import { Exclude } from 'class-transformer';
@@ -20,6 +21,7 @@ import { StaffAuthType } from '@common/enums/staff-auth-type.enum';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
 
 @Entity('staff')
+@Unique(['businessId', 'employeeId'])
 export class Staff {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -74,11 +76,32 @@ export class Staff {
   @Column({ default: false })
   mustChangePassword: boolean; // force password change on first login
 
+  @Column({ type: 'text', nullable: true, default: null })
+  avatarUrl: string | null;
+
   @Column({ default: true })
   isActive: boolean;
 
   @Column({ type: 'jsonb', nullable: true })
   featureOverrides: Partial<Record<BusinessFeature, boolean>> | null;
+
+  @Column({ nullable: true, type: 'text' })
+  employeeId: string | null;
+
+  @Column({ type: 'integer', default: 0 })
+  pinFailedAttempts: number;
+
+  @Column({ nullable: true, type: 'timestamp' })
+  pinLockedUntil: Date | null;
+
+  @Column({ nullable: true, type: 'timestamp' })
+  lastLoginAt: Date | null;
+
+  @Column({ nullable: true, type: 'text' })
+  lastLoginIp: string | null;
+
+  @Column({ nullable: true, type: 'text' })
+  lastLoginTerminal: string | null;
 
   @DeleteDateColumn()
   @Index()

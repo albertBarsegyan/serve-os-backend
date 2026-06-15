@@ -258,7 +258,14 @@ export class OrdersService {
   async findOne(businessId: string, id: string): Promise<Order> {
     const order = await this.orderRepository.findOne({
       where: { id, businessId },
-      relations: ['items', 'items.product', 'items.product.kitchenStation', 'table', 'waiter'],
+      relations: [
+        'items',
+        'items.product',
+        'items.product.kitchenStation',
+        'table',
+        'waiter',
+        'tableSession',
+      ],
     });
 
     if (!order) {

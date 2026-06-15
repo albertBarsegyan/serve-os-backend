@@ -44,6 +44,7 @@ export class TableSessionsService {
 
     const business = await this.businessRepository.findOne({
       where: { id: table.businessId, isActive: true },
+      relations: ['paymentMethods'],
     });
     if (!business) {
       throw new NotFoundException('Business not found or inactive');
@@ -54,15 +55,18 @@ export class TableSessionsService {
       order: { openedAt: 'DESC' },
     });
 
-    session ??= await this.tableSessionRepository.save(
-      this.tableSessionRepository.create({
-        businessId: table.businessId,
-        tableId: table.id,
-        sessionToken: uuid(),
-        isActive: true,
-        closedAt: null,
-      }),
-    );
+    if (!session) {
+      session = await this.tableSessionRepository.save(
+        this.tableSessionRepository.create({
+          businessId: table.businessId,
+          tableId: table.id,
+          sessionToken: uuid(),
+          isActive: true,
+          closedAt: null,
+        }),
+      );
+      await this.tableRepository.update({ id: table.id }, { isReserved: true });
+    }
 
     return {
       sessionToken: session.sessionToken,
@@ -71,6 +75,10 @@ export class TableSessionsService {
       tableId: session.tableId,
       tableName: `Table ${table.number}`,
       businessName: business.name,
+      businessLogoUrl: business.logoUrl ?? null,
+      paymentMethods: (business.paymentMethods ?? [])
+        .filter((m) => m.isActive && !m.deletedAt)
+        .map((m) => ({ method: m.method, isActive: m.isActive })),
     };
   }
 
@@ -80,15 +88,18 @@ export class TableSessionsService {
       order: { openedAt: 'DESC' },
     });
 
-    session ??= await this.tableSessionRepository.save(
-      this.tableSessionRepository.create({
-        businessId,
-        tableId,
-        sessionToken: uuid(),
-        isActive: true,
-        closedAt: null,
-      }),
-    );
+    if (!session) {
+      session = await this.tableSessionRepository.save(
+        this.tableSessionRepository.create({
+          businessId,
+          tableId,
+          sessionToken: uuid(),
+          isActive: true,
+          closedAt: null,
+        }),
+      );
+      await this.tableRepository.update({ id: tableId }, { isReserved: true });
+    }
 
     return session;
   }
@@ -172,7 +183,9 @@ export class TableSessionsService {
 
     session.isActive = false;
     session.closedAt = new Date();
-    return this.tableSessionRepository.save(session);
+    await this.tableSessionRepository.save(session);
+    await this.tableRepository.update({ id: session.tableId }, { isReserved: false });
+    return session;
   }
 
   async refreshLifecycle(sessionId: string): Promise<void> {
@@ -192,6 +205,7 @@ export class TableSessionsService {
       session.isActive = false;
       session.closedAt = new Date();
       await this.tableSessionRepository.save(session);
+      await this.tableRepository.update({ id: session.tableId }, { isReserved: false });
     }
   }
 }

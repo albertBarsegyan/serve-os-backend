@@ -32,6 +32,9 @@ export class User {
   })
   role: Role;
 
+  @Column({ type: 'text', nullable: true, default: null })
+  avatarUrl: string | null;
+
   @Column({ default: false })
   hasBusiness: boolean;
 

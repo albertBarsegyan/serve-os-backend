@@ -57,6 +57,9 @@ export class Business {
   @Column({ type: 'jsonb', nullable: true })
   workingHours: any;
 
+  @Column({ type: 'text', nullable: true, default: null })
+  logoUrl: string | null;
+
   @Column({ default: true })
   isActive: boolean;
 

@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
@@ -18,6 +19,7 @@ import { TableSessionsModule } from '@modules/table-sessions/table-sessions.modu
 import { TablesModule } from '@modules/tables/tables.module';
 import { TenantModule } from '@common/tenant/tenant.module';
 import { UsersModule } from '@modules/users/users.module';
+import { ImagesModule } from '@modules/images/images.module';
 
 // ── Guards / Filters / Middleware ─────────────────────────────────────────────
 import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
@@ -43,6 +45,7 @@ const FEATURE_MODULES = [
   TablesModule,
   TenantModule,
   UsersModule,
+  ImagesModule,
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -146,6 +149,8 @@ function resolveLogContext(req: AuthenticatedRequest): Record<string, unknown> {
         ssl: false,
       }),
     }),
+
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
 
     ...FEATURE_MODULES,
   ],

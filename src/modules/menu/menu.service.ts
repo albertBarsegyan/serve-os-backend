@@ -97,6 +97,7 @@ export class MenuService {
       dietaryFlags: dto.dietaryFlags ? dto.dietaryFlags.map(String) : undefined,
       allergens: dto.allergens ? dto.allergens.map(String) : undefined,
       imageUrls: dto.imageUrls ?? undefined,
+      imageUrl: dto.imageUrls?.[0] ?? undefined,
       kitchenStationId: category.kitchenStationId ?? null,
     };
 
@@ -146,7 +147,10 @@ export class MenuService {
     if (dto.isFeatured !== undefined) updateData.isFeatured = dto.isFeatured;
     if (dto.dietaryFlags !== undefined) updateData.dietaryFlags = dto.dietaryFlags.map(String);
     if (dto.allergens !== undefined) updateData.allergens = dto.allergens.map(String);
-    if (dto.imageUrls !== undefined) updateData.imageUrls = dto.imageUrls;
+    if (dto.imageUrls !== undefined) {
+      updateData.imageUrls = dto.imageUrls;
+      updateData.imageUrl = dto.imageUrls[0] ?? null;
+    }
 
     if (dto.categoryId) {
       const category = await this.findCategory(businessId, dto.categoryId);

@@ -1,4 +1,12 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength, IsOptional } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsString,
+  MinLength,
+  IsOptional,
+  Length,
+  IsNumberString,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class LoginDto {
@@ -30,6 +38,35 @@ export class SlugStaffLoginDto {
   @IsString()
   @IsNotEmpty()
   secret: string;
+}
+
+export class StaffLookupDto {
+  @ApiProperty({ example: 'EMP-AB1234', description: 'Employee ID assigned to the staff member' })
+  @IsString()
+  @IsNotEmpty()
+  employeeId: string;
+
+  @ApiProperty({ example: 'uuid-business-id' })
+  @IsString()
+  @IsNotEmpty()
+  businessId: string;
+}
+
+export class StaffPinLoginDto {
+  @ApiProperty({ example: 'uuid-staff-id' })
+  @IsString()
+  @IsNotEmpty()
+  staffId: string;
+
+  @ApiProperty({ example: '1234', description: 'Exactly 4 digits' })
+  @IsNumberString()
+  @Length(4, 4)
+  pin: string;
+
+  @ApiProperty({ example: 'uuid-business-id' })
+  @IsString()
+  @IsNotEmpty()
+  businessId: string;
 }
 
 /**

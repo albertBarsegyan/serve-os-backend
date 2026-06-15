@@ -13,11 +13,18 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { type Request as ExpressRequest, type Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { BusinessService } from '@modules/business/business.service';
-import { LoginDto, RegisterDto, SlugStaffLoginDto } from './dto/auth.dto';
+import {
+  LoginDto,
+  RegisterDto,
+  SlugStaffLoginDto,
+  StaffLookupDto,
+  StaffPinLoginDto,
+} from './dto/auth.dto';
 import { Public } from '@common/decorators/public.decorator';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
@@ -71,6 +78,9 @@ export class AuthController {
     res.clearCookie('refresh_token', { ...base, path: '/api/auth/refresh' });
   }
 
+  // Staff sessions intentionally use a single long-lived access token (24 h) with no
+  // refresh token. Staff devices are trusted, shared terminals; the overhead of token
+  // rotation adds no security benefit, and a 24 h timeout matches the shift length.
   private setStaffAccessCookie(res: Response, accessToken: string) {
     const base = this.getCookieBase();
     res.cookie('access_token', accessToken, {
@@ -91,6 +101,45 @@ export class AuthController {
   @ApiResponse({ status: 404, description: 'Business slug not found or inactive' })
   async staffRoster(@Query('slug') slug: string) {
     return this.authService.getStaffRoster(slug);
+  }
+
+  @Public()
+  @AllowWithoutBusiness()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('staff/lookup')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Look up staff by employeeId — returns safe subset only' })
+  @ApiResponse({ status: 200, description: 'Staff found' })
+  @ApiResponse({ status: 404, description: 'Employee ID not found' })
+  @ApiResponse({ status: 423, description: 'Account locked' })
+  async staffLookup(@Body() dto: StaffLookupDto) {
+    return this.authService.lookupStaffByEmployeeId(dto.employeeId, dto.businessId);
+  }
+
+  @Public()
+  @AllowWithoutBusiness()
+  @Post('staff/pin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Staff PIN login — issues access_token cookie on success' })
+  @ApiResponse({ status: 200, description: 'Login successful' })
+  @ApiResponse({ status: 401, description: 'Invalid PIN or too many attempts' })
+  @ApiResponse({ status: 423, description: 'Account locked' })
+  async staffPinLogin(
+    @Body() dto: StaffPinLoginDto,
+    @Req() req: ExpressRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const ip =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress;
+    const result = await this.authService.loginStaffWithPin(
+      dto.staffId,
+      dto.pin,
+      dto.businessId,
+      ip,
+    );
+    this.setStaffAccessCookie(res, result.tokens.accessToken);
+    return result;
   }
 
   @Public()

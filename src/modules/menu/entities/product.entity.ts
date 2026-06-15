@@ -57,7 +57,7 @@ export class Product {
   @Column({ nullable: true, type: 'text' })
   sku: string | null;
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: 'text' })
   imageUrl: string;
 
   @Column({ type: 'simple-array', default: '' })

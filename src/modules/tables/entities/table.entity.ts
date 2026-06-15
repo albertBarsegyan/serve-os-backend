@@ -38,6 +38,12 @@ export class Table {
   @Column({ default: true })
   isActive: boolean;
 
+  @Column({ default: false })
+  isReserved: boolean;
+
+  @Column({ nullable: true, type: 'text' })
+  imageUrl: string | null;
+
   @DeleteDateColumn()
   @Index()
   deletedAt: Date | null;

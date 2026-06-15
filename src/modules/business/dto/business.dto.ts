@@ -72,6 +72,11 @@ export class UpsertPaymentMethodDto {
 }
 
 export class UpdateBusinessDto {
+  @ApiProperty({ example: 'https://example.com/logo.webp', required: false, nullable: true })
+  @IsOptional()
+  @IsString()
+  logoUrl?: string | null;
+
   @ApiProperty({ example: 'My Restaurant Updated', required: false })
   @IsOptional()
   @IsString()

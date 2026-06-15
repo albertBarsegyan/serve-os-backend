@@ -5,7 +5,10 @@ import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 
 interface JwtRefreshPayload {
-  sub: string;
+  sub: string; // user.id — set explicitly in generateTokensForOwner
+  userId: string;
+  type: string;
+  email: string;
   iat?: number;
   exp?: number;
 }

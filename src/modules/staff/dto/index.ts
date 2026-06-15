@@ -129,6 +129,11 @@ export class ChangePasswordDto {
 }
 
 export class UpdateStaffDto {
+  @ApiProperty({ example: 'https://example.com/avatar.webp', required: false, nullable: true })
+  @IsOptional()
+  @IsString()
+  avatarUrl?: string | null;
+
   @ApiProperty({ example: 'Jane Doe', required: false })
   @IsOptional()
   @IsString()
@@ -153,11 +158,15 @@ export class StaffResponseDto {
 
   displayName: string;
 
+  avatarUrl?: string | null;
+
   role: string;
 
   authType: string;
 
   email?: string | null;
+
+  employeeId: string | null;
 
   isActive: boolean;
 

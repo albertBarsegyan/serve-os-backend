@@ -46,29 +46,6 @@ export class StaffController {
     private readonly configService: ConfigService,
   ) {}
 
-  private setStaffCookie(res: Response, accessToken: string) {
-    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
-    res.cookie('access_token', accessToken, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: 'strict',
-      path: '/',
-      maxAge: STAFF_TOKEN_TTL_MS,
-    });
-  }
-
-  private clearStaffCookie(res: Response) {
-    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
-    res.clearCookie('access_token', {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: 'strict',
-      path: '/',
-    });
-  }
-
-  // ── Creation (owner-only) ─────────────────────────────────────────────────
-
   @Post('businesses/:businessId/staff/invite')
   @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
@@ -99,6 +76,8 @@ export class StaffController {
     return this.staffService.createWithPin(dto, createdByOwnerId, businessId);
   }
 
+  // ── Creation (owner-only) ─────────────────────────────────────────────────
+
   @Post('businesses/:businessId/staff/password')
   @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
@@ -114,8 +93,6 @@ export class StaffController {
     return this.staffService.createWithPassword(dto, createdByOwnerId, businessId);
   }
 
-  // ── Invite accept (public) ────────────────────────────────────────────────
-
   @Public()
   @Post('staff/accept-invite')
   @ApiOperation({ summary: 'Accept staff invite and set password' })
@@ -123,8 +100,6 @@ export class StaffController {
   async acceptInvite(@Body() dto: AcceptInviteDto) {
     return this.staffService.acceptInvite(dto);
   }
-
-  // ── Login (public) ────────────────────────────────────────────────────────
 
   @Public()
   @Post('businesses/:businessId/staff/login/pin')
@@ -158,6 +133,8 @@ export class StaffController {
     return result;
   }
 
+  // ── Login (public) ────────────────────────────────────────────────────────
+
   @Post('businesses/:businessId/staff/logout')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Staff logout — clears staff_access_token cookie' })
@@ -165,8 +142,6 @@ export class StaffController {
     this.clearStaffCookie(res);
     return { message: 'ok' };
   }
-
-  // ── Password change (staff JWT) ───────────────────────────────────────────
 
   @Post('staff/change-password')
   @UseGuards(AuthGuard('staff-jwt'))
@@ -182,8 +157,6 @@ export class StaffController {
     this.clearStaffCookie(res);
     return result;
   }
-
-  // ── CRUD (owner-only) ─────────────────────────────────────────────────────
 
   @Get('businesses/:businessId/staff')
   @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
@@ -213,6 +186,15 @@ export class StaffController {
     return this.staffService.update(staffId, businessId, dto);
   }
 
+  @Post('businesses/:businessId/staff/:staffId/unlock')
+  @UseGuards(AuthGuard(['jwt', 'staff-jwt']), BusinessAccessGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Unlock a PIN-locked staff member (owner or manager only)' })
+  async unlock(@Param('businessId') businessId: string, @Param('staffId') staffId: string) {
+    return this.staffService.unlockStaff(staffId, businessId);
+  }
+
   @Delete('businesses/:businessId/staff/:staffId')
   @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
@@ -220,5 +202,26 @@ export class StaffController {
   async remove(@Param('businessId') businessId: string, @Param('staffId') staffId: string) {
     await this.staffService.remove(staffId, businessId);
     return { success: true };
+  }
+
+  private setStaffCookie(res: Response, accessToken: string) {
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    res.cookie('access_token', accessToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'strict',
+      path: '/',
+      maxAge: STAFF_TOKEN_TTL_MS,
+    });
+  }
+
+  private clearStaffCookie(res: Response) {
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    res.clearCookie('access_token', {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'strict',
+      path: '/',
+    });
   }
 }

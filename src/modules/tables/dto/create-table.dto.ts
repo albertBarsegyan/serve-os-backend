@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsBoolean } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateTableDto {
@@ -16,4 +16,21 @@ export class CreateTableDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  imageUrl?: string | null;
+}
+
+export class ToggleTableStatusDto {
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  isActive: boolean;
+}
+
+export class SetTableReservationDto {
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  isReserved: boolean;
 }

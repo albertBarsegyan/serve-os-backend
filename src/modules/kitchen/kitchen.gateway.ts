@@ -9,7 +9,18 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { PinoLogger } from 'nestjs-pino';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { Order } from '@modules/orders/entities/order.entity';
+import { TableSession } from '@modules/table-sessions/table-session.entity';
+import { OrderStatus } from '@modules/orders/entities/order-status.enum';
+
+const TERMINAL_STATUSES: OrderStatus[] = [
+  OrderStatus.CLOSED,
+  OrderStatus.CANCELLED,
+  OrderStatus.REFUNDED,
+  OrderStatus.PAYMENT_FAILED,
+];
 
 @WebSocketGateway({
   cors: {
@@ -17,7 +28,11 @@ import { Order } from '@modules/orders/entities/order.entity';
   },
 })
 export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  constructor(private readonly logger: PinoLogger) {}
+  constructor(
+    private readonly logger: PinoLogger,
+    @InjectRepository(TableSession)
+    private readonly tableSessionRepository: Repository<TableSession>,
+  ) {}
 
   @WebSocketServer()
   server: Server;
@@ -46,6 +61,17 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   @SubscribeMessage('join-session')
   async handleJoinSession(@ConnectedSocket() client: Socket, @MessageBody() sessionToken: string) {
     await client.join(`session:${sessionToken}`);
+
+    // Immediately emit the current active order status so the customer view syncs on reconnect
+    const session = await this.tableSessionRepository.findOne({
+      where: { sessionToken },
+      relations: ['orders'],
+    });
+    const activeOrder = session?.orders?.find((o) => !TERMINAL_STATUSES.includes(o.status));
+    if (activeOrder) {
+      client.emit('order.status', { orderId: activeOrder.id, status: activeOrder.status });
+    }
+
     return { event: 'joined', data: sessionToken };
   }
 
@@ -64,7 +90,13 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   }
 
   emitOrderInKitchen(order: Order) {
-    this.server.to(`kitchen:${order.businessId}`).emit('order.in_kitchen', { orderId: order.id });
+    const payload = { orderId: order.id };
+    this.server.to(`kitchen:${order.businessId}`).emit('order.in_kitchen', payload);
+    if (order.tableSession?.sessionToken) {
+      this.server
+        .to(`session:${order.tableSession.sessionToken}`)
+        .emit('order.in_kitchen', payload);
+    }
   }
 
   emitOrderReady(order: Order) {
