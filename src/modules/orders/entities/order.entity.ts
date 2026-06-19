@@ -92,8 +92,28 @@ export class Order {
   @Column({ nullable: true, type: 'text' })
   notes: string | null;
 
+  @Column({ type: 'varchar', length: 500, nullable: true, default: null })
+  cancelReason: string | null;
+
+  @Column({ default: false })
+  autoConfirmed: boolean;
+
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   tipAmount: number;
+
+  @Column({ nullable: true })
+  confirmedById: string | null;
+
+  @ManyToOne(() => Staff, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'confirmedById' })
+  confirmedBy: Staff | null;
+
+  @Column({ nullable: true })
+  cancelledById: string | null;
+
+  @ManyToOne(() => Staff, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'cancelledById' })
+  cancelledBy: Staff | null;
 
   @ManyToOne(() => Staff, (s) => s.servedOrders, { nullable: true })
   @JoinColumn({ name: 'waiterId' })
@@ -107,6 +127,21 @@ export class Order {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @Column({ type: 'timestamp with time zone', nullable: true, default: null })
+  confirmedAt: Date | null;
+
+  @Column({ type: 'timestamp with time zone', nullable: true, default: null })
+  preparationStartedAt: Date | null;
+
+  @Column({ type: 'timestamp with time zone', nullable: true, default: null })
+  readyAt: Date | null;
+
+  @Column({ type: 'timestamp with time zone', nullable: true, default: null })
+  servedAt: Date | null;
+
+  @Column({ type: 'timestamp with time zone', nullable: true, default: null })
+  cancelledAt: Date | null;
 
   @OneToMany(() => Payment, (p) => p.order)
   payments: Payment[];
