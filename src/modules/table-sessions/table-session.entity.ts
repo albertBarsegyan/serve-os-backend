@@ -48,6 +48,9 @@ export class TableSession {
   @Column({ type: 'timestamp', nullable: true })
   closedAt: Date | null;
 
+  @Column({ type: 'timestamp', nullable: true })
+  expiresAt: Date | null;
+
   @OneToMany(() => Order, (o) => o.tableSession)
   orders: Order[];
 }

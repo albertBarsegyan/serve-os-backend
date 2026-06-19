@@ -1,15 +1,29 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import * as express from 'express';
 import { Public } from '@common/decorators/public.decorator';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import { TableSessionsService } from './table-sessions.service';
 import { ScanSessionDto } from './dto/scan-session.dto';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
-import { Req } from '@nestjs/common/decorators/http/route-params.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
+
+const SESSION_COOKIE_MAX_AGE = 28800 * 1000; // 8 hours in ms
 
 @ApiTags('Table Sessions')
 @Controller('sessions')
@@ -20,8 +34,40 @@ export class TableSessionsController {
   @AllowWithoutBusiness()
   @Post('scan')
   @ApiOperation({ summary: 'Scan QR and create/rejoin active table session' })
-  scan(@Body() dto: ScanSessionDto) {
-    return this.tableSessionsService.scan(dto.qrCode);
+  async scan(
+    @Body() dto: ScanSessionDto,
+    @Res({ passthrough: true }) res: express.Response,
+  ) {
+    const result = await this.tableSessionsService.scan(dto.qrCode);
+
+    const cookieOpts = {
+      httpOnly: true,
+      sameSite: 'lax' as const,
+      path: '/',
+      maxAge: SESSION_COOKIE_MAX_AGE,
+    };
+    res.cookie('customer_session_token', result.sessionToken, cookieOpts);
+    // Set business_id so TenantMiddleware can resolve tenant context without a DB lookup
+    res.cookie('business_id', result.businessId, cookieOpts);
+
+    return result;
+  }
+
+  @Public()
+  @AllowWithoutBusiness()
+  @Get('resume')
+  @ApiOperation({ summary: 'Resume an existing session from the stored cookie or token header' })
+  resume(
+    @Req() req: express.Request,
+    @Headers('x-session-token') headerToken?: string,
+  ) {
+    const token =
+      (req.cookies as Record<string, string> | undefined)?.['customer_session_token'] ??
+      headerToken;
+    if (!token) {
+      throw new NotFoundException('No session token provided');
+    }
+    return this.tableSessionsService.resumeByToken(token);
   }
 
   @Public()

@@ -10,7 +10,7 @@ import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { UpdateOrderStatusDto } from './dto/orders.dto';
 import { Product } from '@modules/menu/entities/product.entity';
-import { KitchenGateway } from '@modules/kitchen/kitchen.gateway';
+import { ActorInfo, KitchenGateway } from '@modules/kitchen/kitchen.gateway';
 import { Table } from '@modules/tables/entities/table.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
 import { TableSessionsService } from '@modules/table-sessions/table-sessions.service';
@@ -26,6 +26,8 @@ import { ProcessPaymentDto } from './dto/process-payment.dto';
 import { Payment } from '@modules/payments/entities/payment.entity';
 import { PaymentMethod, PaymentStatus } from '@common/enums/payment.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
+
+const SYSTEM_ACTOR: ActorInfo = { type: 'system', id: 'system' };
 
 @Injectable()
 export class OrdersService {
@@ -130,15 +132,24 @@ export class OrdersService {
 
       let createdOrder = (await this.orderRepository.findOne({
         where: { id: savedOrder.id },
-        relations: ['items', 'items.product', 'items.product.kitchenStation', 'table'],
+        relations: [
+          'items',
+          'items.product',
+          'items.product.kitchenStation',
+          'table',
+          'tableSession',
+        ],
       })) as Order;
 
-      this.emitTransitionEvent(createdOrder, OrderStatus.CREATED);
+      this.kitchenGateway.broadcastOrderUpdate(createdOrder, null, SYSTEM_ACTOR);
 
       if (business.features?.includes(BusinessFeature.QR_ORDERING)) {
         createdOrder = await this.transitionOrder(createdOrder, OrderStatus.CONFIRMED);
         createdOrder = await this.transitionOrder(createdOrder, OrderStatus.IN_KITCHEN);
       }
+
+      // Bump session expiry so active customers aren't kicked out mid-meal
+      void this.tableSessionsService.bumpExpiresAt(tableSession.id).catch(() => undefined);
 
       return createdOrder;
     } catch (err) {
@@ -231,10 +242,16 @@ export class OrdersService {
 
       let createdOrder = (await this.orderRepository.findOne({
         where: { id: savedOrder.id },
-        relations: ['items', 'items.product', 'items.product.kitchenStation', 'table'],
+        relations: [
+          'items',
+          'items.product',
+          'items.product.kitchenStation',
+          'table',
+          'tableSession',
+        ],
       })) as Order;
 
-      this.emitTransitionEvent(createdOrder, OrderStatus.CREATED);
+      this.kitchenGateway.broadcastOrderUpdate(createdOrder, null, SYSTEM_ACTOR);
       createdOrder = await this.transitionOrder(createdOrder, OrderStatus.CONFIRMED);
       createdOrder = await this.transitionOrder(createdOrder, OrderStatus.IN_KITCHEN);
 
@@ -280,6 +297,7 @@ export class OrdersService {
     id: string,
     dto: UpdateOrderStatusDto,
     actorRole?: StaffRole | null,
+    actor?: ActorInfo,
   ): Promise<Order> {
     const order = await this.findOne(businessId, id);
 
@@ -289,7 +307,7 @@ export class OrdersService {
 
     this.orderTransitionService.assertKitchenTransitionPermission(actorRole, dto.status);
 
-    return this.transitionOrder(order, dto.status);
+    return this.transitionOrder(order, dto.status, actor);
   }
 
   async processCashPayment(
@@ -370,11 +388,16 @@ export class OrdersService {
     return this.transitionOrder(order, OrderStatus.CLOSED);
   }
 
-  private async transitionOrder(order: Order, next: OrderStatus): Promise<Order> {
+  private async transitionOrder(
+    order: Order,
+    next: OrderStatus,
+    actor: ActorInfo = SYSTEM_ACTOR,
+  ): Promise<Order> {
     this.orderTransitionService.assertTransition(order.type, order.status, next);
+    const previousStatus = order.status;
     order.status = next;
     const updatedOrder = await this.orderRepository.save(order);
-    this.emitTransitionEvent(updatedOrder, next);
+    this.kitchenGateway.broadcastOrderUpdate(updatedOrder, previousStatus, actor);
 
     if (updatedOrder.tableSessionId) {
       await this.tableSessionsService.refreshLifecycle(updatedOrder.tableSessionId);
@@ -406,39 +429,5 @@ export class OrdersService {
     }
 
     return updatedOrder;
-  }
-
-  private emitTransitionEvent(order: Order, status: OrderStatus): void {
-    switch (status) {
-      case OrderStatus.CREATED:
-        this.kitchenGateway.emitOrderCreated(order);
-        break;
-      case OrderStatus.CONFIRMED:
-        this.kitchenGateway.emitOrderConfirmed(order);
-        break;
-      case OrderStatus.IN_KITCHEN:
-        this.kitchenGateway.emitOrderInKitchen(order);
-        break;
-      case OrderStatus.READY:
-        this.kitchenGateway.emitOrderReady(order);
-        break;
-      case OrderStatus.DELIVERED:
-        this.kitchenGateway.emitOrderDelivered(order);
-        break;
-      case OrderStatus.CLOSED:
-        this.kitchenGateway.emitOrderClosed(order);
-        break;
-      case OrderStatus.CANCELLED:
-        this.kitchenGateway.emitOrderCancelled(order);
-        break;
-      case OrderStatus.PAYMENT_FAILED:
-        this.kitchenGateway.emitOrderPaymentFailed(order);
-        break;
-      case OrderStatus.REFUNDED:
-        this.kitchenGateway.emitOrderRefunded(order);
-        break;
-      default:
-        break;
-    }
   }
 }

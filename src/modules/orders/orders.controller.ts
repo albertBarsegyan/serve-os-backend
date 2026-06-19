@@ -27,6 +27,7 @@ import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
 import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
 import { ProcessPaymentDto } from './dto/process-payment.dto';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
+import type { ActorInfo } from '@modules/kitchen/kitchen.gateway';
 
 @ApiTags('Orders')
 @ApiBearerAuth()
@@ -101,7 +102,14 @@ export class OrdersController {
     @Body() dto: UpdateOrderStatusDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.ordersService.updateStatus(businessId, id, dto, req.business?.role);
+    const actor = this.buildActor(req.user);
+    return this.ordersService.updateStatus(businessId, id, dto, req.business?.role, actor);
+  }
+
+  private buildActor(payload: AuthenticatedRequest['user']): ActorInfo {
+    if (!payload) return { type: 'system', id: 'system' };
+    if (payload.type === 'owner') return { type: 'owner', id: payload.userId };
+    return { type: 'staff', id: payload.staffId, role: payload.role };
   }
 
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)

@@ -10,10 +10,36 @@ import {
 import { Server, Socket } from 'socket.io';
 import { PinoLogger } from 'nestjs-pino';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Order } from '@modules/orders/entities/order.entity';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
+import { Table } from '@modules/tables/entities/table.entity';
 import { OrderStatus } from '@modules/orders/entities/order-status.enum';
+
+const OPEN_ORDER_STATUSES = [
+  OrderStatus.CREATED,
+  OrderStatus.CONFIRMED,
+  OrderStatus.IN_KITCHEN,
+  OrderStatus.READY,
+  OrderStatus.DELIVERED,
+];
+
+export interface ActorInfo {
+  type: 'owner' | 'staff' | 'system';
+  id: string;
+  role?: string;
+}
+
+export interface OrderStatusChangedPayload {
+  orderId: string;
+  status: string;
+  previousStatus: string | null;
+  tableId: string | null;
+  tableName: string | null;
+  sessionToken: string | null;
+  updatedAt: string;
+  actor: ActorInfo;
+}
 
 const TERMINAL_STATUSES: OrderStatus[] = [
   OrderStatus.CLOSED,
@@ -62,91 +88,52 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   async handleJoinSession(@ConnectedSocket() client: Socket, @MessageBody() sessionToken: string) {
     await client.join(`session:${sessionToken}`);
 
-    // Immediately emit the current active order status so the customer view syncs on reconnect
+    // Emit the current active order status so the customer view syncs on connect/reconnect
     const session = await this.tableSessionRepository.findOne({
       where: { sessionToken },
-      relations: ['orders'],
+      relations: ['orders', 'orders.table'],
     });
     const activeOrder = session?.orders?.find((o) => !TERMINAL_STATUSES.includes(o.status));
     if (activeOrder) {
-      client.emit('order.status', { orderId: activeOrder.id, status: activeOrder.status });
+      const syncPayload: OrderStatusChangedPayload = {
+        orderId: activeOrder.id,
+        status: activeOrder.status,
+        previousStatus: null,
+        tableId: activeOrder.tableId,
+        tableName: activeOrder.table?.number != null ? String(activeOrder.table.number) : null,
+        sessionToken,
+        updatedAt: activeOrder.updatedAt.toISOString(),
+        actor: { type: 'system', id: 'system' },
+      };
+      client.emit('order:status-changed', syncPayload);
     }
 
     return { event: 'joined', data: sessionToken };
   }
 
-  emitOrderCreated(order: Order) {
-    const payload = { orderId: order.id, tableId: order.tableId, items: order.items ?? [] };
-    this.server.to(`business:${order.businessId}`).emit('order.created', payload);
-    this.server.to(`kitchen:${order.businessId}`).emit('order.created', payload);
-  }
+  broadcastOrderUpdate(order: Order, previousStatus: OrderStatus | null, actor: ActorInfo): void {
+    const payload: OrderStatusChangedPayload = {
+      orderId: order.id,
+      status: order.status,
+      previousStatus,
+      tableId: order.tableId,
+      tableName: order.table?.number != null ? String(order.table.number) : null,
+      sessionToken: order.tableSession?.sessionToken ?? null,
+      updatedAt: new Date().toISOString(),
+      actor,
+    };
 
-  emitOrderConfirmed(order: Order) {
-    const payload = { orderId: order.id, tableId: order.tableId };
-    if (order.tableSession?.sessionToken) {
-      this.server.to(`session:${order.tableSession.sessionToken}`).emit('order.confirmed', payload);
-    }
-    this.server.to(`business:${order.businessId}`).emit('order.confirmed', payload);
-  }
-
-  emitOrderInKitchen(order: Order) {
-    const payload = { orderId: order.id };
-    this.server.to(`kitchen:${order.businessId}`).emit('order.in_kitchen', payload);
+    this.server.to(`kitchen:${order.businessId}`).emit('order:status-changed', payload);
+    this.server.to(`business:${order.businessId}`).emit('order:status-changed', payload);
     if (order.tableSession?.sessionToken) {
       this.server
         .to(`session:${order.tableSession.sessionToken}`)
-        .emit('order.in_kitchen', payload);
+        .emit('order:status-changed', payload);
     }
-  }
 
-  emitOrderReady(order: Order) {
-    const payload = { orderId: order.id, tableId: order.tableId };
-    this.server.to(`business:${order.businessId}`).emit('order.ready', payload);
-    if (order.tableSession?.sessionToken) {
-      this.server.to(`session:${order.tableSession.sessionToken}`).emit('order.ready', payload);
-    }
-  }
-
-  emitOrderDelivered(order: Order) {
-    const payload = { orderId: order.id };
-    this.server.to(`business:${order.businessId}`).emit('order.delivered', payload);
-    if (order.tableSession?.sessionToken) {
-      this.server.to(`session:${order.tableSession.sessionToken}`).emit('order.delivered', payload);
-    }
-  }
-
-  emitOrderClosed(order: Order) {
-    const payload = { orderId: order.id, total: order.totalAmount, tipAmount: order.tipAmount };
-    this.server.to(`business:${order.businessId}`).emit('order.closed', payload);
-    if (order.tableSession?.sessionToken) {
-      this.server.to(`session:${order.tableSession.sessionToken}`).emit('order.closed', payload);
-    }
-  }
-
-  emitOrderCancelled(order: Order) {
-    const payload = { orderId: order.id, reason: 'cancelled' };
-    this.server.to(`business:${order.businessId}`).emit('order.cancelled', payload);
-    this.server.to(`kitchen:${order.businessId}`).emit('order.cancelled', payload);
-    if (order.tableSession?.sessionToken) {
-      this.server.to(`session:${order.tableSession.sessionToken}`).emit('order.cancelled', payload);
-    }
-  }
-
-  emitOrderPaymentFailed(order: Order) {
-    const payload = { orderId: order.id };
-    this.server.to(`business:${order.businessId}`).emit('order.payment_failed', payload);
-    if (order.tableSession?.sessionToken) {
-      this.server
-        .to(`session:${order.tableSession.sessionToken}`)
-        .emit('order.payment_failed', payload);
-    }
-  }
-
-  emitOrderRefunded(order: Order) {
-    const payload = { orderId: order.id };
-    this.server.to(`business:${order.businessId}`).emit('order.refunded', payload);
-    if (order.tableSession?.sessionToken) {
-      this.server.to(`session:${order.tableSession.sessionToken}`).emit('order.refunded', payload);
-    }
+    this.logger.debug(
+      { orderId: order.id, status: order.status, previousStatus },
+      'Order status broadcast',
+    );
   }
 }

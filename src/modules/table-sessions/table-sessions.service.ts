@@ -5,8 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { randomBytes } from 'crypto';
 import { In, Repository } from 'typeorm';
-import { v4 as uuid } from 'uuid';
 import { TableSession } from './table-session.entity';
 import { Table } from '@modules/tables/entities/table.entity';
 import { Business } from '@modules/business/entities/business.entity';
@@ -22,6 +22,16 @@ const OPEN_ORDER_STATUSES = [
   OrderStatus.READY,
   OrderStatus.DELIVERED,
 ];
+
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+
+function newExpiresAt(): Date {
+  return new Date(Date.now() + SESSION_TTL_MS);
+}
+
+function generateSessionToken(): string {
+  return randomBytes(32).toString('hex');
+}
 
 @Injectable()
 export class TableSessionsService {
@@ -60,9 +70,10 @@ export class TableSessionsService {
         this.tableSessionRepository.create({
           businessId: table.businessId,
           tableId: table.id,
-          sessionToken: uuid(),
+          sessionToken: generateSessionToken(),
           isActive: true,
           closedAt: null,
+          expiresAt: newExpiresAt(),
         }),
       );
       await this.tableRepository.update({ id: table.id }, { isReserved: true });
@@ -82,6 +93,52 @@ export class TableSessionsService {
     };
   }
 
+  async resumeByToken(token: string) {
+    const session = await this.tableSessionRepository.findOne({
+      where: { sessionToken: token, isActive: true },
+    });
+
+    if (!session) {
+      throw new NotFoundException('Session not found or inactive');
+    }
+
+    if (session.expiresAt && session.expiresAt < new Date()) {
+      throw new NotFoundException('Session expired');
+    }
+
+    const [table, business] = await Promise.all([
+      this.tableRepository.findOne({ where: { id: session.tableId } }),
+      this.businessRepository.findOne({
+        where: { id: session.businessId },
+        relations: ['paymentMethods'],
+      }),
+    ]);
+
+    if (!table || !business) {
+      throw new NotFoundException('Session data incomplete');
+    }
+
+    return {
+      sessionToken: session.sessionToken,
+      tableSessionId: session.id,
+      businessId: session.businessId,
+      tableId: session.tableId,
+      tableName: `Table ${table.number}`,
+      businessName: business.name,
+      businessLogoUrl: business.logoUrl ?? null,
+      paymentMethods: (business.paymentMethods ?? [])
+        .filter((m) => m.isActive && !m.deletedAt)
+        .map((m) => ({ method: m.method, isActive: m.isActive })),
+    };
+  }
+
+  async bumpExpiresAt(sessionId: string): Promise<void> {
+    await this.tableSessionRepository.update(
+      { id: sessionId, isActive: true },
+      { expiresAt: newExpiresAt() },
+    );
+  }
+
   async findOrCreateForTable(businessId: string, tableId: string): Promise<TableSession> {
     let session = await this.tableSessionRepository.findOne({
       where: { businessId, tableId, isActive: true },
@@ -93,9 +150,10 @@ export class TableSessionsService {
         this.tableSessionRepository.create({
           businessId,
           tableId,
-          sessionToken: uuid(),
+          sessionToken: generateSessionToken(),
           isActive: true,
           closedAt: null,
+          expiresAt: newExpiresAt(),
         }),
       );
       await this.tableRepository.update({ id: tableId }, { isReserved: true });
@@ -111,6 +169,10 @@ export class TableSessionsService {
 
     if (!session) {
       throw new ForbiddenException('Invalid or expired sessionToken');
+    }
+
+    if (session.expiresAt && session.expiresAt < new Date()) {
+      throw new ForbiddenException('Session has expired');
     }
 
     return session;

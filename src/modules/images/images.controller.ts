@@ -25,6 +25,7 @@ import { ImagesService } from './images.service';
 import { UploadImageDto } from './dto/upload-image.dto';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import { Roles } from '@common/decorators/roles.decorator';
+import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
 import { ALLOWED_MIME_TYPES, MAX_FILE_SIZE } from './images.constants';
@@ -39,6 +40,7 @@ export class ImagesController {
   constructor(private readonly imagesService: ImagesService) {}
 
   @Post('upload')
+  @AllowWithoutBusiness()
   @UseInterceptors(FileInterceptor('file'))
   @ApiOperation({ summary: 'Upload an image (svg, png, jpg, jpeg, webp — max 3 MB)' })
   @ApiConsumes('multipart/form-data')
