@@ -37,7 +37,7 @@ export class ModifiersController {
   async createModifierGroup(
     @Param('businessId') businessId: string,
     @Body() dto: CreateModifierGroupDto,
-    @GetAuthPayload() payload: AuthPayload,
+    @GetAuthPayload() _payload: AuthPayload,
   ): Promise<ModifierGroup> {
     return this.modifiersService.createModifierGroup(businessId, dto);
   }
@@ -49,7 +49,7 @@ export class ModifiersController {
   @Get()
   async getModifierGroups(
     @Param('businessId') businessId: string,
-    @GetAuthPayload() payload: AuthPayload,
+    @GetAuthPayload() _payload: AuthPayload,
   ): Promise<ModifierGroup[]> {
     return this.modifiersService.getModifierGroups(businessId);
   }
@@ -62,7 +62,7 @@ export class ModifiersController {
   async getModifierGroup(
     @Param('businessId') businessId: string,
     @Param('groupId') groupId: string,
-    @GetAuthPayload() payload: AuthPayload,
+    @GetAuthPayload() _payload: AuthPayload,
   ): Promise<ModifierGroup> {
     return this.modifiersService.getModifierGroup(businessId, groupId);
   }
@@ -76,7 +76,7 @@ export class ModifiersController {
     @Param('businessId') businessId: string,
     @Param('groupId') groupId: string,
     @Body() dto: UpdateModifierGroupDto,
-    @GetAuthPayload() payload: AuthPayload,
+    @GetAuthPayload() _payload: AuthPayload,
   ): Promise<ModifierGroup> {
     return this.modifiersService.updateModifierGroup(businessId, groupId, dto);
   }
@@ -90,7 +90,7 @@ export class ModifiersController {
   async deleteModifierGroup(
     @Param('businessId') businessId: string,
     @Param('groupId') groupId: string,
-    @GetAuthPayload() payload: AuthPayload,
+    @GetAuthPayload() _payload: AuthPayload,
   ): Promise<void> {
     return this.modifiersService.deleteModifierGroup(businessId, groupId);
   }
@@ -106,7 +106,7 @@ export class ModifiersController {
     @Param('businessId') businessId: string,
     @Param('groupId') groupId: string,
     @Body() dto: CreateModifierItemDto,
-    @GetAuthPayload() payload: AuthPayload,
+    @GetAuthPayload() _payload: AuthPayload,
   ): Promise<Modifier> {
     return this.modifiersService.addModifierToGroup(businessId, groupId, dto);
   }
@@ -119,7 +119,7 @@ export class ModifiersController {
   async getModifiers(
     @Param('businessId') businessId: string,
     @Param('groupId') groupId: string,
-    @GetAuthPayload() payload: AuthPayload,
+    @GetAuthPayload() _payload: AuthPayload,
   ): Promise<Modifier[]> {
     return this.modifiersService.getModifiers(businessId, groupId);
   }
@@ -134,7 +134,7 @@ export class ModifiersController {
     @Param('groupId') groupId: string,
     @Param('modifierId') modifierId: string,
     @Body() dto: Partial<CreateModifierItemDto>,
-    @GetAuthPayload() payload: AuthPayload,
+    @GetAuthPayload() _payload: AuthPayload,
   ): Promise<Modifier> {
     return this.modifiersService.updateModifier(businessId, groupId, modifierId, dto);
   }
@@ -149,7 +149,7 @@ export class ModifiersController {
     @Param('businessId') businessId: string,
     @Param('groupId') groupId: string,
     @Param('modifierId') modifierId: string,
-    @GetAuthPayload() payload: AuthPayload,
+    @GetAuthPayload() _payload: AuthPayload,
   ): Promise<void> {
     return this.modifiersService.deleteModifier(businessId, groupId, modifierId);
   }

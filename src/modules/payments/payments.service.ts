@@ -3,9 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Payment } from './entities/payment.entity';
 import { Order } from '@modules/orders/entities/order.entity';
-import { PaymentMethod, PaymentStatus, OrderPaymentStatus } from '@common/enums/payment.enum';
+import { PaymentMethod, PaymentStatus } from '@common/enums/payment.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { Staff } from '@modules/staff/entities/staff.entity';
 import { OrdersService } from '@modules/orders/orders.service';
 
 @Injectable()

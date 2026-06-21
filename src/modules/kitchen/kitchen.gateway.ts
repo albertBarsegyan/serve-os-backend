@@ -15,14 +15,6 @@ import { Order } from '@modules/orders/entities/order.entity';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
 import { OrderStatus } from '@modules/orders/entities/order-status.enum';
 
-const OPEN_ORDER_STATUSES = [
-  OrderStatus.CREATED,
-  OrderStatus.CONFIRMED,
-  OrderStatus.IN_KITCHEN,
-  OrderStatus.READY,
-  OrderStatus.DELIVERED,
-];
-
 export interface ActorInfo {
   type: 'owner' | 'staff' | 'system';
   id: string;
