@@ -2,8 +2,8 @@ import { DataSource } from 'typeorm';
 
 export const AppDataSourceProd = new DataSource({
   type: 'postgres',
-  host: process.env.MIGRATION_POSTGRES_HOST,
-  port: parseInt(process.env.MIGRATION_POSTGRES_PORT || '5432'),
+  host: process.env.MIGRATION_POSTGRES_HOST || process.env.POSTGRES_HOST,
+  port: parseInt(process.env.MIGRATION_POSTGRES_PORT || process.env.POSTGRES_PORT || '5432'),
   username: process.env.POSTGRES_USER,
   password: process.env.POSTGRES_PASSWORD,
   database: process.env.POSTGRES_DB,
@@ -13,6 +13,6 @@ export const AppDataSourceProd = new DataSource({
   synchronize: false,
   logging: false,
   ssl: false,
-  migrationsRun: true,
+  migrationsRun: false,
   dropSchema: false,
 });
