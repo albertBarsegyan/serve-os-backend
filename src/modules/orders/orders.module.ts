@@ -13,6 +13,10 @@ import { TableSessionsModule } from '@modules/table-sessions/table-sessions.modu
 import { OrderTransitionService } from './order-transition.service';
 import { TenantAccessService } from '@common/guards/tenant-access.service';
 import { FeatureGuard } from '@common/guards/feature.guard';
+import { CashProvider } from '@modules/payments/providers/cash.provider';
+import { ManualPosProvider } from '@modules/payments/providers/manual-pos.provider';
+import { BankRedirectProvider } from '@modules/payments/providers/bank-redirect.provider';
+import { ProviderRegistryService } from '@modules/payments/providers/provider-registry.service';
 
 @Module({
   imports: [
@@ -21,7 +25,16 @@ import { FeatureGuard } from '@common/guards/feature.guard';
     TableSessionsModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, OrderTransitionService, TenantAccessService, FeatureGuard],
-  exports: [OrdersService],
+  providers: [
+    OrdersService,
+    OrderTransitionService,
+    TenantAccessService,
+    FeatureGuard,
+    CashProvider,
+    ManualPosProvider,
+    BankRedirectProvider,
+    ProviderRegistryService,
+  ],
+  exports: [OrdersService, ProviderRegistryService],
 })
 export class OrdersModule {}

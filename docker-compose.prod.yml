@@ -3,27 +3,21 @@ services:
     image: postgres:16-alpine
     container_name: serve_os_db_prod
     restart: unless-stopped
-
     env_file:
-      - /etc/serve-os/.env
-
+      - .env
     volumes:
-      - postgres_data_prod:/var/lib/postgresql/data
-
+      - /mnt/data/serve-os/postgres:/var/lib/postgresql/data
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-
     networks:
       - internal
-
-    # 🔒 Security
+    mem_limit: 1g
     security_opt:
       - no-new-privileges:true
-
     logging:
       driver: "json-file"
       options:
@@ -31,55 +25,41 @@ services:
         max-file: "3"
 
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: production
-
+    image: ghcr.io/albertBarsegyan/serve-os-backend:latest
     container_name: serve_os_app_prod
     restart: unless-stopped
-
     ports:
       - "${PORT:-4000}:4000"
-
     env_file:
-      - /etc/serve-os/.env
-
+      - .env
     depends_on:
       db:
         condition: service_healthy
-
     command: [ "node", "dist/main.js" ]
-
     healthcheck:
       test: [ "CMD", "wget", "--spider", "-q", "http://localhost:4000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-
     networks:
       - internal
-
-    # 🔒 Security hardening
+      - shared
+    mem_limit: 1g
     security_opt:
       - no-new-privileges:true
-
     read_only: true
-
     tmpfs:
       - /tmp
       - /app/tmp
-
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-volumes:
-  postgres_data_prod:
-
 networks:
   internal:
     driver: bridge
+  shared:
+    external: true

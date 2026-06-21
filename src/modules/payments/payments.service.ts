@@ -6,6 +6,7 @@ import { Order } from '@modules/orders/entities/order.entity';
 import { PaymentMethod, PaymentStatus, OrderPaymentStatus } from '@common/enums/payment.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { Staff } from '@modules/staff/entities/staff.entity';
+import { OrdersService } from '@modules/orders/orders.service';
 
 @Injectable()
 export class PaymentsService {
@@ -15,6 +16,7 @@ export class PaymentsService {
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
     private readonly dataSource: DataSource,
+    private readonly ordersService: OrdersService,
   ) {}
 
   async create(businessId: string | null, dto: CreatePaymentDto): Promise<Payment> {
@@ -52,45 +54,63 @@ export class PaymentsService {
   async confirmPayment(
     paymentId: string,
     businessId: string | null,
-    userId: string | null,
+    staffId: string | null,
   ): Promise<Payment> {
-    const payment = await this.paymentRepository.findOne({
-      where: businessId ? { id: paymentId, businessId } : { id: paymentId },
-      relations: ['order'],
-    });
-
-    if (!payment) {
-      throw new NotFoundException(`Payment with ID ${paymentId} not found`);
-    }
-
-    if (payment.status !== PaymentStatus.PENDING) {
-      throw new BadRequestException('Payment is already processed');
-    }
-
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
+    let confirmedPayment: Payment;
+    let alreadyConfirmed = false;
+
     try {
-      payment.status = PaymentStatus.CONFIRMED;
-      payment.confirmedAt = new Date();
-      payment.confirmedById = null; // Will be set by staff when staff authentication is fully integrated
+      // Pessimistic write lock — prevents concurrent double-confirms
+      const payment = await queryRunner.manager.findOne(Payment, {
+        where: businessId ? { id: paymentId, businessId } : { id: paymentId },
+        lock: { mode: 'pessimistic_write' },
+      });
 
-      const updatedPayment = await queryRunner.manager.save(payment);
+      if (!payment) throw new NotFoundException(`Payment ${paymentId} not found`);
 
-      // Update order payment status
-      const order = payment.order;
-      order.paymentStatus = OrderPaymentStatus.PAID;
-      await queryRunner.manager.save(order);
-
-      await queryRunner.commitTransaction();
-      return updatedPayment;
+      if (payment.status === PaymentStatus.CONFIRMED) {
+        // Idempotent: already confirmed — return without re-processing
+        alreadyConfirmed = true;
+        confirmedPayment = payment;
+        await queryRunner.commitTransaction();
+      } else {
+        if (payment.status === PaymentStatus.FAILED) {
+          throw new BadRequestException('Cannot confirm a failed payment');
+        }
+        payment.status = PaymentStatus.CONFIRMED;
+        payment.confirmedAt = new Date();
+        payment.confirmedById = staffId;
+        confirmedPayment = await queryRunner.manager.save(payment);
+        await queryRunner.commitTransaction();
+      }
     } catch (err) {
       await queryRunner.rollbackTransaction();
       throw err;
     } finally {
       await queryRunner.release();
     }
+
+    // Outside the lock: recompute paymentStatus and advance order lifecycle
+    if (!alreadyConfirmed) {
+      const order = await this.orderRepository.findOne({
+        where: businessId
+          ? { id: confirmedPayment.orderId, businessId }
+          : { id: confirmedPayment.orderId },
+      });
+      if (order) {
+        await this.ordersService.recomputeAndAdvance(order);
+      }
+    }
+
+    return confirmedPayment!;
+  }
+
+  async findByProviderRef(providerRef: string): Promise<Payment | null> {
+    return this.paymentRepository.findOne({ where: { providerRef } });
   }
 
   async findAll(businessId: string): Promise<Payment[]> {
