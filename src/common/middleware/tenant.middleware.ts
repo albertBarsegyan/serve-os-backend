@@ -43,6 +43,6 @@ export class TenantMiddleware implements NestMiddleware {
     }
 
     req.businessId = null;
-    next();
+    return next();
   }
 }

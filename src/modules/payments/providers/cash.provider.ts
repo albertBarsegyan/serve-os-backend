@@ -6,11 +6,11 @@ import type { PaymentMethodConfig } from '@common/enums/payment.enum';
 @Injectable()
 export class CashProvider implements PaymentProvider {
   // Cash is always ON_PREMISE — staff handles collection at the table.
-  async initiate(_order: Order, _config: PaymentMethodConfig): Promise<InitiateResult> {
-    return { kind: 'manual' };
+  initiate(_order: Order, _config: PaymentMethodConfig): Promise<InitiateResult> {
+    return Promise.resolve({ kind: 'manual' });
   }
 
-  async verify(_providerRef: string, _config: PaymentMethodConfig): Promise<VerifyResult> {
-    return 'PENDING';
+  verify(_providerRef: string, _config: PaymentMethodConfig): Promise<VerifyResult> {
+    return Promise.resolve('PENDING');
   }
 }

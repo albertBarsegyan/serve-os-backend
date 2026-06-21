@@ -8,14 +8,14 @@ import type { PaymentMethodConfig } from '@common/enums/payment.enum';
 // signing algorithm (HMAC key? RSA?), and callback verification scheme.
 @Injectable()
 export class BankRedirectProvider implements PaymentProvider {
-  async initiate(_order: Order, _config: PaymentMethodConfig): Promise<InitiateResult> {
+  initiate(_order: Order, _config: PaymentMethodConfig): Promise<InitiateResult> {
     throw new NotImplementedException(
       'Bank redirect provider is not yet configured. ' +
         'Provide the register/getOrderStatus endpoints and signing details to complete B4.',
     );
   }
 
-  async verify(_providerRef: string, _config: PaymentMethodConfig): Promise<VerifyResult> {
+  verify(_providerRef: string, _config: PaymentMethodConfig): Promise<VerifyResult> {
     throw new NotImplementedException('Bank redirect provider is not yet configured.');
   }
 }

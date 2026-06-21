@@ -8,7 +8,6 @@ import {
   IsUrl,
   Min,
   Max,
-  ArrayNotEmpty,
   IsArray,
   ArrayUnique,
   ValidateNested,
