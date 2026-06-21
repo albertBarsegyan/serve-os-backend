@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { TableSessionsController } from './table-sessions.controller';
 import { TableSessionsService } from './table-sessions.service';
+import { GuestSessionGuard } from '@common/guards/guest-session.guard';
 import { TableSession } from './table-session.entity';
 import { Table } from '@modules/tables/entities/table.entity';
 import { Business } from '@modules/business/entities/business.entity';
@@ -12,7 +13,7 @@ import { TenantAccessService } from '@common/guards/tenant-access.service';
 @Module({
   imports: [TypeOrmModule.forFeature([TableSession, Table, Business, Order, Staff])],
   controllers: [TableSessionsController],
-  providers: [TableSessionsService, TenantAccessService],
-  exports: [TableSessionsService],
+  providers: [TableSessionsService, GuestSessionGuard, TenantAccessService],
+  exports: [TableSessionsService, GuestSessionGuard],
 })
 export class TableSessionsModule {}

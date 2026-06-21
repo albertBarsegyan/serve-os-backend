@@ -1,19 +1,18 @@
 import {
-  WebSocketGateway,
-  WebSocketServer,
-  SubscribeMessage,
-  MessageBody,
   ConnectedSocket,
+  MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { PinoLogger } from 'nestjs-pino';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Order } from '@modules/orders/entities/order.entity';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
-import { Table } from '@modules/tables/entities/table.entity';
 import { OrderStatus } from '@modules/orders/entities/order-status.enum';
 
 const OPEN_ORDER_STATUSES = [
@@ -41,6 +40,18 @@ export interface OrderStatusChangedPayload {
   actor: ActorInfo;
 }
 
+export interface OrderPendingConfirmationPayload {
+  orderId: string;
+  tableId: string | null;
+  sessionToken: string | null;
+  items: Array<{
+    productId: string;
+    name: string;
+    quantity: number;
+    unitPrice: number;
+  }>;
+}
+
 const TERMINAL_STATUSES: OrderStatus[] = [
   OrderStatus.CLOSED,
   OrderStatus.CANCELLED,
@@ -54,14 +65,14 @@ const TERMINAL_STATUSES: OrderStatus[] = [
   },
 })
 export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  @WebSocketServer()
+  server: Server;
+
   constructor(
     private readonly logger: PinoLogger,
     @InjectRepository(TableSession)
     private readonly tableSessionRepository: Repository<TableSession>,
   ) {}
-
-  @WebSocketServer()
-  server: Server;
 
   handleConnection(client: Socket) {
     this.logger.info({ clientId: client.id }, 'Kitchen client connected');
@@ -100,7 +111,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
         status: activeOrder.status,
         previousStatus: null,
         tableId: activeOrder.tableId,
-        tableName: activeOrder.table?.number != null ? String(activeOrder.table.number) : null,
+        tableName: activeOrder?.table?.number !== null ? String(activeOrder?.table?.number) : null,
         sessionToken,
         updatedAt: activeOrder.updatedAt.toISOString(),
         actor: { type: 'system', id: 'system' },
@@ -111,13 +122,30 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     return { event: 'joined', data: sessionToken };
   }
 
+  broadcastPendingConfirmation(order: Order): void {
+    const payload: OrderPendingConfirmationPayload = {
+      orderId: order.id,
+      tableId: order.tableId,
+      sessionToken: order.tableSession?.sessionToken ?? null,
+      items: (order.items ?? []).map((item) => ({
+        productId: item.productId,
+        name: item.product?.name ?? '',
+        quantity: item.quantity,
+        unitPrice: Number(item.unitPrice),
+      })),
+    };
+
+    this.server.to(`business:${order.businessId}`).emit('order-pending-confirmation', payload);
+    this.logger.debug({ orderId: order.id }, 'Order pending confirmation broadcast');
+  }
+
   broadcastOrderUpdate(order: Order, previousStatus: OrderStatus | null, actor: ActorInfo): void {
     const payload: OrderStatusChangedPayload = {
       orderId: order.id,
       status: order.status,
       previousStatus,
       tableId: order.tableId,
-      tableName: order.table?.number != null ? String(order.table.number) : null,
+      tableName: order.table?.number !== null ? String(order?.table?.number) : null,
       sessionToken: order.tableSession?.sessionToken ?? null,
       updatedAt: new Date().toISOString(),
       actor,

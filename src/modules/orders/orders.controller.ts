@@ -11,11 +11,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { OrdersService } from './orders.service';
 import { UpdateOrderStatusDto } from './dto/orders.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { FeatureGuard } from '@common/guards/feature.guard';
+import { GuestSessionGuard } from '@common/guards/guest-session.guard';
 import { RequireBusinessFeature } from '@common/decorators/require-feature.decorator';
 import { Public } from '@common/decorators/public.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
@@ -24,8 +26,10 @@ import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
+import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
 import { ProcessPaymentDto } from './dto/process-payment.dto';
+import { RecordStaffPaymentDto } from '@modules/payments/dto/record-staff-payment.dto';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import type { ActorInfo } from '@modules/kitchen/kitchen.gateway';
 
@@ -46,6 +50,17 @@ export class OrdersController {
     @Headers('x-session-token') headerSessionToken?: string,
   ) {
     return this.ordersService.createFromQr(dto, headerSessionToken);
+  }
+
+  @Public()
+  @AllowWithoutBusiness()
+  @Post('guest')
+  @UseGuards(GuestSessionGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
+  @ApiOperation({ summary: 'Place a guest order; session validated via cookie / x-session-token' })
+  @ApiResponse({ status: 201, description: 'Order created; redirectUrl present for PREPAID flow' })
+  createGuestOrder(@Body() dto: CreateGuestOrderDto, @Req() req: AuthenticatedRequest) {
+    return this.ordersService.createGuestOrder(req.tableSession!, dto);
   }
 
   @RequireBusinessFeature(
@@ -110,6 +125,45 @@ export class OrdersController {
     if (!payload) return { type: 'system', id: 'system' };
     if (payload.type === 'owner') return { type: 'owner', id: payload.userId };
     return { type: 'staff', id: payload.staffId, role: payload.role };
+  }
+
+  /**
+   * Staff fires the kitchen for an ON_PREMISE order: CREATED → CONFIRMED → IN_KITCHEN.
+   * Requires WAITER, MANAGER, or OWNER. Does not apply to PREPAID orders (those
+   * advance automatically when the provider confirms payment).
+   */
+  @RequireBusinessFeature([BusinessFeature.ORDER_DINE_IN, BusinessFeature.ORDER_TAKEAWAY], 'any')
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER)
+  @Post(':id/confirm')
+  @ApiOperation({ summary: 'Staff confirms an ON_PREMISE order and fires the kitchen' })
+  confirmOrder(
+    @Tenant(true) businessId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const actor = this.buildActor(req.user);
+    return this.ordersService.confirmOrder(businessId, id, actor);
+  }
+
+  /**
+   * Staff records a payment against an order (CASHIER / MANAGER / OWNER).
+   * Recomputes paymentStatus from SUM(confirmed); closes the order if fully paid.
+   */
+  @RequireBusinessFeature(
+    [BusinessFeature.ORDER_DINE_IN, BusinessFeature.ORDER_TAKEAWAY, BusinessFeature.ORDER_DELIVERY],
+    'any',
+  )
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.CASHIER)
+  @Post(':id/payments')
+  @ApiOperation({ summary: 'Record a staff-collected payment and recompute order payment status' })
+  recordStaffPayment(
+    @Tenant(true) businessId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RecordStaffPaymentDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const staffId = req.user?.type === 'staff' ? req.user.staffId : null;
+    return this.ordersService.recordStaffPayment(businessId, id, dto, staffId);
   }
 
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)

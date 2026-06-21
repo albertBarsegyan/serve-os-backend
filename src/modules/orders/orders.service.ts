@@ -13,8 +13,10 @@ import { Product } from '@modules/menu/entities/product.entity';
 import { ActorInfo, KitchenGateway } from '@modules/kitchen/kitchen.gateway';
 import { Table } from '@modules/tables/entities/table.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
+import { TableSession } from '@modules/table-sessions/table-session.entity';
 import { TableSessionsService } from '@modules/table-sessions/table-sessions.service';
 import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
+import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
 import { OrderItemModifier } from '@modules/modifiers/entities/order-item-modifier.entity';
 import { OrderStatus } from './entities/order-status.enum';
@@ -24,8 +26,15 @@ import { BusinessFeature } from '@common/enums/business-feature.enum';
 import { OrderTransitionService } from './order-transition.service';
 import { ProcessPaymentDto } from './dto/process-payment.dto';
 import { Payment } from '@modules/payments/entities/payment.entity';
-import { PaymentMethod, PaymentStatus } from '@common/enums/payment.enum';
+import {
+  CaptureTiming,
+  OrderPaymentStatus,
+  PaymentMethod,
+  PaymentMethodConfig,
+  PaymentStatus,
+} from '@common/enums/payment.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
+import { ProviderRegistryService } from '@modules/payments/providers/provider-registry.service';
 
 const SYSTEM_ACTOR: ActorInfo = { type: 'system', id: 'system' };
 
@@ -48,6 +57,7 @@ export class OrdersService {
     private readonly kitchenGateway: KitchenGateway,
     private readonly tableSessionsService: TableSessionsService,
     private readonly orderTransitionService: OrderTransitionService,
+    private readonly providerRegistry: ProviderRegistryService,
   ) {}
 
   async createFromQr(dto: CreateOrderFromQrDto, headerSessionToken?: string): Promise<Order> {
@@ -164,6 +174,145 @@ export class OrdersService {
     return this.createFromQr(dto);
   }
 
+  async createGuestOrder(
+    session: TableSession,
+    dto: CreateGuestOrderDto,
+  ): Promise<{ order: Order; redirectUrl?: string }> {
+    const business = await this.businessRepository.findOne({
+      where: { id: session.businessId },
+      relations: ['paymentMethods'],
+    });
+    if (!business) throw new NotFoundException('Business not found');
+
+    const pmRecord = (business.paymentMethods ?? []).find(
+      (pm) => pm.method === dto.paymentMethod && pm.isActive && !pm.deletedAt,
+    );
+    if (!pmRecord) {
+      throw new BadRequestException(
+        `Payment method ${dto.paymentMethod} is not available for this business`,
+      );
+    }
+
+    const config = pmRecord.config as PaymentMethodConfig | null;
+    const captureTiming = config?.captureTiming ?? CaptureTiming.ON_PREMISE;
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    let savedOrderId: string;
+    try {
+      let totalAmount = 0;
+      const orderItems: OrderItem[] = [];
+
+      for (const itemDto of dto.items) {
+        const product = await queryRunner.manager.findOne(Product, {
+          where: { id: itemDto.productId, businessId: session.businessId },
+        });
+        if (!product) throw new NotFoundException(`Product ${itemDto.productId} not found`);
+
+        const modifiers = itemDto.selectedModifiers ?? [];
+        const modifierPrice = modifiers.reduce((sum, m) => sum + Number(m.priceAdjustment), 0);
+        const unitPrice = Number(product.price) + modifierPrice;
+        totalAmount += unitPrice * itemDto.quantity;
+
+        orderItems.push(
+          queryRunner.manager.create(OrderItem, {
+            productId: product.id,
+            quantity: itemDto.quantity,
+            unitPrice,
+            notes: itemDto.notes,
+            selectedModifiers: modifiers.map((m) =>
+              queryRunner.manager.create(OrderItemModifier, {
+                modifierId: m.modifierId,
+                modifierName: m.name,
+                priceAdjustment: m.priceAdjustment,
+              }),
+            ),
+          }),
+        );
+      }
+
+      const order = queryRunner.manager.create(Order, {
+        businessId: session.businessId,
+        tableId: session.tableId,
+        type: OrderType.DINE_IN,
+        status: OrderStatus.CREATED,
+        paymentStatus: OrderPaymentStatus.UNPAID,
+        tableSessionId: session.id,
+        totalAmount,
+        notes: dto.notes ?? null,
+      });
+
+      const savedOrder = await queryRunner.manager.save(order);
+      savedOrderId = savedOrder.id;
+      for (const item of orderItems) item.order = savedOrder;
+      await queryRunner.manager.save(orderItems);
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+
+    const order = (await this.orderRepository.findOne({
+      where: { id: savedOrderId },
+      relations: ['items', 'items.product', 'table', 'tableSession'],
+    })) as Order;
+
+    this.kitchenGateway.broadcastOrderUpdate(order, null, SYSTEM_ACTOR);
+    void this.tableSessionsService.bumpExpiresAt(session.id).catch(() => undefined);
+
+    if (captureTiming === CaptureTiming.ON_PREMISE) {
+      this.kitchenGateway.broadcastPendingConfirmation(order);
+      return { order };
+    }
+
+    // PREPAID: delegate to the configured provider
+    const provider = this.providerRegistry.get(config!.provider);
+    const result = await provider.initiate(order, config!);
+
+    if (result.kind === 'redirect') {
+      await this.paymentRepository.save(
+        this.paymentRepository.create({
+          businessId: session.businessId,
+          orderId: order.id,
+          method: dto.paymentMethod,
+          status: PaymentStatus.PENDING,
+          amount: order.totalAmount,
+          providerRef: result.providerRef,
+          providerStatus: 'INITIATED',
+        }),
+      );
+      return { order, redirectUrl: result.url };
+    }
+
+    if (result.kind === 'instant') {
+      await this.paymentRepository.save(
+        this.paymentRepository.create({
+          businessId: session.businessId,
+          orderId: order.id,
+          method: dto.paymentMethod,
+          status: PaymentStatus.CONFIRMED,
+          amount: order.totalAmount,
+          providerRef: result.providerRef,
+          confirmedAt: new Date(),
+        }),
+      );
+      order.paymentStatus = OrderPaymentStatus.PAID;
+      await this.orderRepository.save(order);
+      const afterConfirm = await this.transitionOrder(order, OrderStatus.CONFIRMED);
+      await this.transitionOrder(afterConfirm, OrderStatus.IN_KITCHEN);
+      return { order: afterConfirm };
+    }
+
+    // Provider returned 'manual' despite PREPAID config — fall back to ON_PREMISE gating
+    this.kitchenGateway.broadcastPendingConfirmation(order);
+    return { order };
+  }
+
   async createFromStaff(
     businessId: string,
     dto: CreateStaffOrderDto,
@@ -262,6 +411,112 @@ export class OrdersService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  /**
+   * Staff confirmation for ON_PREMISE orders: CREATED → CONFIRMED → IN_KITCHEN.
+   * Called by POST /orders/:id/confirm (WAITER+).
+   */
+  async confirmOrder(businessId: string, orderId: string, actor: ActorInfo): Promise<Order> {
+    const order = await this.findOne(businessId, orderId);
+    if (order.status !== OrderStatus.CREATED) {
+      throw new BadRequestException(
+        `Only CREATED orders can be confirmed by staff (current: ${order.status})`,
+      );
+    }
+    const confirmed = await this.transitionOrder(order, OrderStatus.CONFIRMED, actor);
+    return this.transitionOrder(confirmed, OrderStatus.IN_KITCHEN, actor);
+  }
+
+  /**
+   * Staff payment recording: creates a CONFIRMED payment and returns the updated order.
+   * Called by POST /orders/:id/payments (CASHIER / MANAGER / OWNER).
+   */
+  async recordStaffPayment(
+    businessId: string,
+    orderId: string,
+    dto: { method: PaymentMethod; amount: number; tipAmount?: number },
+    staffId: string | null,
+  ): Promise<Order> {
+    const order = await this.findOne(businessId, orderId);
+    const business = await this.businessRepository.findOne({ where: { id: businessId } });
+    if (!business) throw new NotFoundException('Business not found');
+
+    if (dto.tipAmount && !business.features?.includes(BusinessFeature.TIPS)) {
+      throw new ForbiddenException('Tips are not enabled for this business');
+    }
+
+    await this.paymentRepository.save(
+      this.paymentRepository.create({
+        businessId,
+        orderId: order.id,
+        method: dto.method,
+        status: PaymentStatus.CONFIRMED,
+        amount: dto.amount,
+        confirmedAt: new Date(),
+        confirmedById: staffId,
+      }),
+    );
+
+    if (dto.tipAmount) {
+      order.tipAmount = Number(dto.tipAmount);
+      await this.orderRepository.save(order);
+    }
+
+    return this.recomputeAndAdvance(order);
+  }
+
+  /**
+   * Recomputes order.paymentStatus from SUM(CONFIRMED payments), saves it,
+   * then advances the order: fires kitchen for PREPAID CREATED orders,
+   * or closes for fully-delivered orders.
+   */
+  async recomputeAndAdvance(order: Order): Promise<Order> {
+    const row = await this.dataSource
+      .createQueryBuilder()
+      .select('COALESCE(SUM(p.amount), 0)', 'total')
+      .from(Payment, 'p')
+      .where('p."orderId" = :orderId AND p.status = :status', {
+        orderId: order.id,
+        status: PaymentStatus.CONFIRMED,
+      })
+      .getRawOne<{ total: string }>();
+
+    const paidTotal = Number(row?.total ?? 0);
+    const required = Number(order.totalAmount) + Number(order.tipAmount ?? 0);
+
+    if (paidTotal >= required) {
+      order.paymentStatus = OrderPaymentStatus.PAID;
+    } else if (paidTotal > 0) {
+      order.paymentStatus = OrderPaymentStatus.PARTIALLY_PAID;
+    }
+
+    let saved = await this.orderRepository.save(order);
+
+    if (saved.paymentStatus !== OrderPaymentStatus.PAID) return saved;
+
+    // PREPAID: order was waiting on payment before kitchen could start
+    if (saved.status === OrderStatus.CREATED) {
+      const fullOrder = (await this.orderRepository.findOne({
+        where: { id: saved.id },
+        relations: [
+          'items',
+          'items.product',
+          'items.product.kitchenStation',
+          'table',
+          'tableSession',
+        ],
+      })) as Order;
+      const confirmed = await this.transitionOrder(fullOrder, OrderStatus.CONFIRMED);
+      saved = await this.transitionOrder(confirmed, OrderStatus.IN_KITCHEN);
+    } else if (
+      saved.status === OrderStatus.DELIVERED ||
+      (saved.type === OrderType.TAKEAWAY && saved.status === OrderStatus.READY)
+    ) {
+      saved = await this.transitionOrder(saved, OrderStatus.CLOSED);
+    }
+
+    return saved;
   }
 
   async findAll(businessId: string): Promise<Order[]> {

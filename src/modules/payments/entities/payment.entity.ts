@@ -3,6 +3,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToOne,
+  OneToMany,
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
@@ -11,6 +12,7 @@ import { Business } from '@modules/business/entities/business.entity';
 import { Order } from '@modules/orders/entities/order.entity';
 import { PaymentMethod, PaymentStatus } from '@common/enums/payment.enum';
 import { Staff } from '@modules/staff/entities/staff.entity';
+import { PaymentAllocation } from './payment-allocation.entity';
 
 @Entity('payments')
 export class Payment {
@@ -43,6 +45,12 @@ export class Payment {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   amount: number;
 
+  @Column({ type: 'varchar', nullable: true, default: null })
+  providerRef: string | null;
+
+  @Column({ type: 'varchar', nullable: true, default: null })
+  providerStatus: string | null;
+
   @Column({ type: 'timestamp', nullable: true })
   confirmedAt: Date;
 
@@ -52,6 +60,9 @@ export class Payment {
   @ManyToOne(() => Staff, (s) => s.confirmedPayments, { nullable: true })
   @JoinColumn({ name: 'confirmedById' })
   confirmedBy: Staff;
+
+  @OneToMany(() => PaymentAllocation, (a) => a.payment)
+  allocations: PaymentAllocation[];
 
   @CreateDateColumn()
   createdAt: Date;
