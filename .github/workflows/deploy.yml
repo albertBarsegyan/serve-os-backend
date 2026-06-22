@@ -86,6 +86,8 @@ jobs:
             echo "S3_SECRET_KEY=${{ secrets.S3_SECRET_KEY }}"
             echo "S3_BUCKET=${{ secrets.S3_BUCKET }}"
             echo "S3_PUBLIC_URL=${{ secrets.S3_PUBLIC_URL }}"
+            echo "MINIO_ROOT_USER=${{ secrets.MINIO_ROOT_USER }}"
+            echo "MINIO_ROOT_PASSWORD=${{ secrets.MINIO_ROOT_PASSWORD }}"
           } > .env
 
       - name: Copy files to server
