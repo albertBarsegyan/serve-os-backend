@@ -12,8 +12,8 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
-  // Global prefix
-  app.setGlobalPrefix('api');
+  // Global prefix — /health is excluded so Docker healthchecks hit it directly
+  app.setGlobalPrefix('api', { exclude: ['health'] });
 
   // Swagger Configuration
   const config = new DocumentBuilder()

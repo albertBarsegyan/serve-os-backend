@@ -20,6 +20,7 @@ import { TablesModule } from '@modules/tables/tables.module';
 import { TenantModule } from '@common/tenant/tenant.module';
 import { UsersModule } from '@modules/users/users.module';
 import { ImagesModule } from '@modules/images/images.module';
+import { HealthModule } from '@modules/health/health.module';
 
 // ── Guards / Filters / Middleware ─────────────────────────────────────────────
 import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
@@ -35,6 +36,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 const FEATURE_MODULES = [
   AuthModule,
   BusinessModule,
+  HealthModule,
   KitchenModule,
   MenuModule,
   ModifiersModule,
