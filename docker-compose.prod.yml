@@ -34,8 +34,8 @@ services:
     volumes:
       - /mnt/volume-hel1-1/serve-os-backend/minio:/data
     ports:
-      - "9000:9000"   # S3 API — point S3_ENDPOINT and S3_PUBLIC_URL here
-      - "9001:9001"   # MinIO web console
+      - "127.0.0.1:9000:9000"   # S3 API — point S3_ENDPOINT and S3_PUBLIC_URL here
+      - "127.0.0.1:9001:9001"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
@@ -56,7 +56,7 @@ services:
 
   app:
     image: ghcr.io/albertbarsegyan/serve-os-backend:latest
-    container_name: serve_os_app_prod
+    container_name: serve_os_backend_prod
     restart: unless-stopped
     ports:
       - "${PORT:-4000}:4000"
