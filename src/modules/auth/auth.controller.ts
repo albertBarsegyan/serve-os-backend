@@ -241,7 +241,11 @@ export class AuthController {
 
     this.clearTokenCookies(res);
 
-    clearBusinessCookie(res, this.configService.get<string>('NODE_ENV') === 'production', this.configService.get<string>('COOKIE_DOMAIN'));
+    clearBusinessCookie(
+      res,
+      this.configService.get<string>('NODE_ENV') === 'production',
+      this.configService.get<string>('COOKIE_DOMAIN'),
+    );
 
     return { message: 'ok' };
   }
@@ -301,7 +305,11 @@ export class AuthController {
   @ApiOperation({ summary: 'Clear selected business' })
   @ApiResponse({ status: 200, description: 'Business cleared' })
   clearBusiness(@Res({ passthrough: true }) res: Response) {
-    clearBusinessCookie(res, this.configService.get<string>('NODE_ENV') === 'production', this.configService.get<string>('COOKIE_DOMAIN'));
+    clearBusinessCookie(
+      res,
+      this.configService.get<string>('NODE_ENV') === 'production',
+      this.configService.get<string>('COOKIE_DOMAIN'),
+    );
     return { message: 'ok' };
   }
 }
