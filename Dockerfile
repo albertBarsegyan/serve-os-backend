@@ -38,7 +38,7 @@ COPY --from=builder /app/package-lock.json ./
 COPY --from=builder /app/dist ./dist
 
 # Install only production dependencies
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -50,4 +50,4 @@ USER nodejs
 EXPOSE 4000
 
 # Use node directly for better signal handling
-CMD ["node", "dist/main"]
+CMD ["node", "dist/main.js"]
