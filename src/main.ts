@@ -36,9 +36,14 @@ async function bootstrap() {
 
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
 
-  // CORS
+  // CORS — CORS_ORIGIN may be a single origin or a comma-separated list
+  const rawOrigin = process.env.CORS_ORIGIN ?? '';
+  const allowedOrigins = rawOrigin
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
   app.enableCors({
-    origin: process.env.CORS_ORIGIN,
+    origin: allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });

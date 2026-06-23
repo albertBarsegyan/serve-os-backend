@@ -53,7 +53,11 @@ const TERMINAL_STATUSES: OrderStatus[] = [
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: (process.env.CORS_ORIGIN ?? '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+    credentials: true,
   },
 })
 export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect {
