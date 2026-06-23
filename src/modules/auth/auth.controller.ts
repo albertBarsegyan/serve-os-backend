@@ -49,10 +49,12 @@ export class AuthController {
 
   private getCookieBase() {
     const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    const cookieDomain = this.configService.get<string>('COOKIE_DOMAIN');
     return {
       httpOnly: true,
       secure: isProduction,
       sameSite: 'strict' as const,
+      ...(cookieDomain ? { domain: cookieDomain } : {}),
     };
   }
 
@@ -239,7 +241,7 @@ export class AuthController {
 
     this.clearTokenCookies(res);
 
-    clearBusinessCookie(res, this.configService.get<string>('NODE_ENV') === 'production');
+    clearBusinessCookie(res, this.configService.get<string>('NODE_ENV') === 'production', this.configService.get<string>('COOKIE_DOMAIN'));
 
     return { message: 'ok' };
   }
@@ -286,6 +288,7 @@ export class AuthController {
       res,
       businessId,
       isProduction: this.configService.get<string>('NODE_ENV') === 'production',
+      domain: this.configService.get<string>('COOKIE_DOMAIN'),
     });
 
     return { message: 'ok' };
@@ -298,8 +301,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Clear selected business' })
   @ApiResponse({ status: 200, description: 'Business cleared' })
   clearBusiness(@Res({ passthrough: true }) res: Response) {
-    // Clear the cookie used for selected business
-    res.clearCookie('business_id');
+    clearBusinessCookie(res, this.configService.get<string>('NODE_ENV') === 'production', this.configService.get<string>('COOKIE_DOMAIN'));
     return { message: 'ok' };
   }
 }
