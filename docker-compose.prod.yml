@@ -54,6 +54,25 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  createbuckets:
+    image: minio/mc:latest
+    container_name: serve_os_minio_init_prod
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file:
+      - .env
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb --ignore-existing myminio/serve-os-prod &&
+      printf '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":[\"*\"]},\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::serve-os-prod/public/*\"]}]}' > /tmp/policy.json &&
+      mc anonymous set-json /tmp/policy.json myminio/serve-os-prod &&
+      echo 'Bucket policy applied'
+      "
+    networks:
+      - internal
+
   app:
     image: ghcr.io/albertbarsegyan/serve-os-backend:latest
     container_name: serve_os_backend_prod
