@@ -1,4 +1,4 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { PinoLogger } from 'nestjs-pino';
 import { getErrorCode } from '@common/enums/api-error-code.enum';
@@ -58,7 +58,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
     };
 
     if (statusCode >= 500) {
-      this.logger.error(errorPayload, 'Unhandled exception returned to client');
+      this.logger.error(
+        { ...errorPayload, err: exception },
+        'Unhandled exception returned to client',
+      );
     } else {
       this.logger.warn(errorPayload, 'HTTP exception returned to client');
     }
