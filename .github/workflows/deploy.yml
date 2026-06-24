@@ -75,6 +75,7 @@ jobs:
             echo "MIGRATION_POSTGRES_PORT=${{ secrets.MIGRATION_POSTGRES_PORT }}"
             echo "PORT=${{ secrets.PORT }}"
             echo "CORS_ORIGIN=${{ secrets.CORS_ORIGIN }}"
+            echo "COOKIE_DOMAIN=${{ secrets.COOKIE_DOMAIN }}"
             echo "JWT_SECRET=${{ secrets.JWT_SECRET }}"
             echo "JWT_REFRESH_SECRET=${{ secrets.JWT_REFRESH_SECRET }}"
             echo "JWT_ACCESS_EXPIRES_IN=${{ secrets.JWT_ACCESS_EXPIRES_IN }}"
