@@ -2,12 +2,26 @@ import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/com
 import { OrderStatus } from './entities/order-status.enum';
 import { OrderType } from './entities/order-type.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
+import { Order } from './entities/order.entity';
 
 const TERMINAL_STATUSES = new Set<OrderStatus>([
   OrderStatus.CLOSED,
   OrderStatus.CANCELLED,
   OrderStatus.REFUNDED,
 ]);
+
+export type TransitionActor = StaffRole | 'customer' | 'system';
+
+// Roles allowed to drive each non-cancel transition; 'system' always permitted.
+const ROLE_TRANSITIONS: Partial<Record<OrderStatus, TransitionActor[]>> = {
+  [OrderStatus.CONFIRMED]: [StaffRole.WAITER, StaffRole.MANAGER, 'system'],
+  [OrderStatus.IN_KITCHEN]: [StaffRole.KITCHEN, StaffRole.MANAGER, 'system'],
+  [OrderStatus.READY]: [StaffRole.KITCHEN, StaffRole.MANAGER, 'system'],
+  [OrderStatus.DELIVERED]: [StaffRole.WAITER, StaffRole.MANAGER, 'system'],
+  [OrderStatus.CLOSED]: [StaffRole.CASHIER, StaffRole.MANAGER, 'system'],
+  [OrderStatus.PAYMENT_FAILED]: ['system'],
+  [OrderStatus.REFUNDED]: ['system'],
+};
 
 @Injectable()
 export class OrderTransitionService {
@@ -104,5 +118,73 @@ export class OrderTransitionService {
     }
 
     throw new ForbiddenException('You are not allowed to cancel this order at current state');
+  }
+
+  /**
+   * Validates the transition and the actor's permission, then mutates the order
+   * in-memory (sets status + milestone timestamp). The caller is responsible for saving.
+   */
+  transition(order: Order, next: OrderStatus, actor: TransitionActor = 'system'): void {
+    this.assertTransition(order.type, order.status, next);
+
+    if (next === OrderStatus.CANCELLED) {
+      this.assertCancelActor(order.status, actor);
+    } else {
+      const allowed = ROLE_TRANSITIONS[next];
+      if (allowed && !allowed.includes(actor)) {
+        throw new ForbiddenException(
+          `Actor with role "${actor}" cannot transition order to ${next}`,
+        );
+      }
+    }
+
+    const now = new Date();
+    switch (next) {
+      case OrderStatus.CONFIRMED:
+        order.confirmedAt = now;
+        break;
+      case OrderStatus.IN_KITCHEN:
+        order.preparationStartedAt = now;
+        break;
+      case OrderStatus.READY:
+        order.readyAt = now;
+        break;
+      case OrderStatus.DELIVERED:
+        order.servedAt = now;
+        break;
+      case OrderStatus.CANCELLED:
+        order.cancelledAt = now;
+        break;
+    }
+
+    order.status = next;
+  }
+
+  private assertCancelActor(current: OrderStatus, actor: TransitionActor): void {
+    if (TERMINAL_STATUSES.has(current)) {
+      throw new ForbiddenException('Terminal orders cannot be cancelled');
+    }
+
+    if (actor === 'system') return;
+
+    if (actor === 'customer') {
+      if (current !== OrderStatus.CREATED) {
+        throw new ForbiddenException(
+          'Customers can only cancel orders that have not yet been confirmed',
+        );
+      }
+      return;
+    }
+
+    if (actor === StaffRole.MANAGER) return;
+
+    if (
+      actor === StaffRole.WAITER &&
+      [OrderStatus.CREATED, OrderStatus.CONFIRMED].includes(current)
+    ) {
+      return;
+    }
+
+    throw new ForbiddenException('You are not allowed to cancel this order at its current state');
   }
 }

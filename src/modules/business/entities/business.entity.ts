@@ -63,6 +63,9 @@ export class Business {
   @Column({ default: true })
   isActive: boolean;
 
+  @Column({ default: false })
+  posAutoAcceptPayment: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 

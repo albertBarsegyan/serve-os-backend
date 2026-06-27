@@ -13,7 +13,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { OrdersService } from './orders.service';
-import { UpdateOrderStatusDto } from './dto/orders.dto';
+import { ConfirmOrderPaymentDto, UpdateOrderStatusDto } from './dto/orders.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { FeatureGuard } from '@common/guards/feature.guard';
@@ -164,6 +164,46 @@ export class OrdersController {
   ) {
     const staffId = req.user?.type === 'staff' ? req.user.staffId : null;
     return this.ordersService.recordStaffPayment(businessId, id, dto, staffId);
+  }
+
+  /**
+   * Cashier confirms the pending payment opened when an order was served.
+   * Transitions DELIVERED → CLOSED and broadcasts 'order:paid'.
+   * If posAutoAcceptPayment is enabled on the business, this fires automatically
+   * and the cashier queue stays empty.
+   */
+  @RequireBusinessFeature(
+    [BusinessFeature.ORDER_DINE_IN, BusinessFeature.ORDER_TAKEAWAY, BusinessFeature.ORDER_DELIVERY],
+    'any',
+  )
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.CASHIER)
+  @Post(':id/payment/confirm')
+  @ApiOperation({ summary: 'Cashier confirms payment for a served order (DELIVERED → CLOSED)' })
+  @ApiResponse({ status: 200, description: 'Payment confirmed; order closed' })
+  @ApiResponse({ status: 400, description: 'Order not in DELIVERED status' })
+  @ApiResponse({ status: 404, description: 'No pending payment found' })
+  confirmOrderPayment(
+    @Tenant(true) businessId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ConfirmOrderPaymentDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const staffId = req.user?.type === 'staff' ? req.user.staffId : null;
+    return this.ordersService.confirmOrderPayment(businessId, id, staffId, dto);
+  }
+
+  @Public()
+  @AllowWithoutBusiness()
+  @Post(':id/cancel')
+  @ApiOperation({ summary: 'Customer cancels their own CREATED order via session token' })
+  @ApiResponse({ status: 200, description: 'Order cancelled' })
+  @ApiResponse({ status: 400, description: 'Order is past the cancellable state' })
+  @ApiResponse({ status: 403, description: 'Session does not own this order' })
+  cancelBySession(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-session-token') sessionToken: string,
+  ) {
+    return this.ordersService.cancelBySession(id, sessionToken);
   }
 
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)

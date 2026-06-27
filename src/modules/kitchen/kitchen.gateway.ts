@@ -14,6 +14,7 @@ import { Repository } from 'typeorm';
 import { Order } from '@modules/orders/entities/order.entity';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
 import { OrderStatus } from '@modules/orders/entities/order-status.enum';
+import { CustomerOrderStatus, toCustomerStatus } from '@modules/orders/customer-order-status';
 
 export interface ActorInfo {
   type: 'owner' | 'staff' | 'system';
@@ -21,6 +22,25 @@ export interface ActorInfo {
   role?: string;
 }
 
+export interface OrderEventPayload {
+  orderId: string;
+  businessId: string;
+  tableId: string | null;
+  sessionToken: string | null;
+  status: OrderStatus;
+  customerStatus: CustomerOrderStatus;
+  playSound: boolean;
+  at: string;
+}
+
+export interface CallWaiterPayload {
+  businessId: string;
+  tableId: string | null;
+  sessionToken: string;
+  at: string;
+}
+
+// Kept for the join-session reconnect-sync path only.
 export interface OrderStatusChangedPayload {
   orderId: string;
   status: string;
@@ -95,7 +115,9 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   async handleJoinSession(@ConnectedSocket() client: Socket, @MessageBody() sessionToken: string) {
     await client.join(`session:${sessionToken}`);
 
-    // Emit the current active order status so the customer view syncs on connect/reconnect
+    // Emit the current active order status so the customer view syncs on connect/reconnect.
+    // Uses order:status-changed (legacy) so the customer page can treat this as initial state
+    // rather than a transition event.
     const session = await this.tableSessionRepository.findOne({
       where: { sessionToken },
       relations: ['orders', 'orders.table'],
@@ -117,6 +139,118 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
 
     return { event: 'joined', data: sessionToken };
   }
+
+  @SubscribeMessage('call-waiter')
+  async handleCallWaiter(@MessageBody() body: { sessionToken: string }): Promise<void> {
+    const session = await this.tableSessionRepository.findOne({
+      where: { sessionToken: body.sessionToken },
+    });
+    if (!session) return;
+
+    const payload: CallWaiterPayload = {
+      businessId: session.businessId,
+      tableId: session.tableId,
+      sessionToken: body.sessionToken,
+      at: new Date().toISOString(),
+    };
+
+    this.server.to(`business:${session.businessId}`).emit('order:call-waiter', payload);
+    this.logger.debug({ sessionToken: body.sessionToken }, 'Call-waiter broadcast');
+  }
+
+  // ── Typed emit helpers ───────────────────────────────────────────────────────
+  // Each emits to exactly the rooms listed in the order-flow spec.
+
+  /** CREATED → business room (waiter gets an audible new-order alert). */
+  emitOrderCreated(order: Order): void {
+    const payload = this.buildPayload(order, true);
+    this.server.to(`business:${order.businessId}`).emit('order:created', payload);
+    this.logger.debug({ orderId: order.id }, 'order:created emitted');
+  }
+
+  /** CONFIRMED → session (customer) + kitchen (KDS gets audible alert). */
+  emitOrderConfirmed(order: Order): void {
+    const payload = this.buildPayload(order, true);
+    const token = order.tableSession?.sessionToken;
+    if (token) {
+      this.server.to(`session:${token}`).emit('order:confirmed', { ...payload, playSound: false });
+    }
+    this.server.to(`kitchen:${order.businessId}`).emit('order:confirmed', payload);
+    this.logger.debug({ orderId: order.id }, 'order:confirmed emitted');
+  }
+
+  /** IN_KITCHEN → session (customer alert) + business (waiter progress). */
+  emitOrderPreparing(order: Order): void {
+    const payload = this.buildPayload(order, true);
+    const token = order.tableSession?.sessionToken;
+    if (token) {
+      this.server.to(`session:${token}`).emit('order:preparing', payload);
+    }
+    this.server.to(`business:${order.businessId}`).emit('order:preparing', payload);
+    this.logger.debug({ orderId: order.id }, 'order:preparing emitted');
+  }
+
+  /** READY → session (customer alert) + business (waiter notified). */
+  emitOrderReady(order: Order): void {
+    const payload = this.buildPayload(order, true);
+    const token = order.tableSession?.sessionToken;
+    if (token) {
+      this.server.to(`session:${token}`).emit('order:ready', payload);
+    }
+    this.server.to(`business:${order.businessId}`).emit('order:ready', payload);
+    this.logger.debug({ orderId: order.id }, 'order:ready emitted');
+  }
+
+  /** DELIVERED → business room only (cashier payment queue opens in Part 3). */
+  emitOrderServed(order: Order): void {
+    const payload = this.buildPayload(order, true);
+    this.server.to(`business:${order.businessId}`).emit('order:served', payload);
+    this.logger.debug({ orderId: order.id }, 'order:served emitted');
+  }
+
+  /** CANCELLED → session + business + kitchen (everyone is notified). */
+  emitOrderCancelled(order: Order): void {
+    const payload = this.buildPayload(order, false);
+    const token = order.tableSession?.sessionToken;
+    if (token) {
+      this.server.to(`session:${token}`).emit('order:cancelled', payload);
+    }
+    this.server.to(`business:${order.businessId}`).emit('order:cancelled', payload);
+    this.server.to(`kitchen:${order.businessId}`).emit('order:cancelled', payload);
+    this.logger.debug({ orderId: order.id }, 'order:cancelled emitted');
+  }
+
+  /** DELIVERED → business room: cashier payment queue opens. */
+  emitPaymentOpen(order: Order, paymentId: string, amount: number): void {
+    this.server.to(`business:${order.businessId}`).emit('order:payment-open', {
+      orderId: order.id,
+      businessId: order.businessId,
+      tableId: order.tableId,
+      amount,
+      paymentId,
+      at: new Date().toISOString(),
+    });
+    this.logger.debug({ orderId: order.id, paymentId }, 'order:payment-open emitted');
+  }
+
+  /** CLOSED via payment → session + business: order fully settled. */
+  emitOrderPaid(order: Order, paymentId: string): void {
+    const payload = {
+      orderId: order.id,
+      businessId: order.businessId,
+      paymentId,
+      customerStatus: toCustomerStatus(order.status),
+      at: new Date().toISOString(),
+    };
+    const token = order.tableSession?.sessionToken;
+    if (token) {
+      this.server.to(`session:${token}`).emit('order:paid', payload);
+    }
+    this.server.to(`business:${order.businessId}`).emit('order:paid', payload);
+    this.logger.debug({ orderId: order.id, paymentId }, 'order:paid emitted');
+  }
+
+  // ── Legacy broadcast helpers (kept for backward compat / join-session sync) ─
 
   broadcastPendingConfirmation(order: Order): void {
     const payload: OrderPendingConfirmationPayload = {
@@ -159,5 +293,20 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
       { orderId: order.id, status: order.status, previousStatus },
       'Order status broadcast',
     );
+  }
+
+  // ── Private helpers ──────────────────────────────────────────────────────────
+
+  private buildPayload(order: Order, playSound: boolean): OrderEventPayload {
+    return {
+      orderId: order.id,
+      businessId: order.businessId,
+      tableId: order.tableId,
+      sessionToken: order.tableSession?.sessionToken ?? null,
+      status: order.status,
+      customerStatus: toCustomerStatus(order.status),
+      playSound,
+      at: new Date().toISOString(),
+    };
   }
 }
