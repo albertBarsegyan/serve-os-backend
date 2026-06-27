@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Payment } from './entities/payment.entity';
 import { Order } from '@modules/orders/entities/order.entity';
 import { PaymentMethod, PaymentStatus } from '@common/enums/payment.enum';
@@ -42,12 +42,6 @@ export class PaymentsService {
     }
 
     return savedPayment;
-  }
-
-  private confirmOnlinePayment(paymentId: string, businessId: string) {
-    setTimeout(() => {
-      void this.confirmPayment(paymentId, businessId, null);
-    }, 2000);
   }
 
   async confirmPayment(
@@ -117,5 +111,9 @@ export class PaymentsService {
       where: { businessId },
       relations: ['order'],
     });
+  }
+
+  private confirmOnlinePayment(paymentId: string, businessId: string) {
+    void this.confirmPayment(paymentId, businessId, null);
   }
 }

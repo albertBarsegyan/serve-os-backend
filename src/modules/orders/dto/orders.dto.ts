@@ -7,7 +7,9 @@ import {
   IsString,
   IsNumber,
   IsEnum,
+  Min,
 } from 'class-validator';
+import { PaymentMethod } from '@common/enums/payment.enum';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { OrderStatus } from '../entities/order-status.enum';
@@ -58,4 +60,21 @@ export class UpdateOrderStatusDto {
   @IsNotEmpty()
   @IsEnum(OrderStatus)
   status: OrderStatus;
+}
+
+export class ConfirmOrderPaymentDto {
+  @ApiProperty({
+    enum: PaymentMethod,
+    required: false,
+    description: 'Override payment method (defaults to POS). Use CASH if customer paid with cash.',
+  })
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  method?: PaymentMethod;
+
+  @ApiProperty({ example: 5.0, required: false, description: 'Optional tip amount.' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  tipAmount?: number;
 }

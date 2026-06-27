@@ -107,6 +107,16 @@ export class UpdateBusinessDto {
   isActive?: boolean;
 
   @ApiProperty({
+    example: false,
+    required: false,
+    description:
+      'When true, served orders are closed and paid automatically without cashier confirmation (POS auto-accept mode).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  posAutoAcceptPayment?: boolean;
+
+  @ApiProperty({
     enum: BusinessFeature,
     isArray: true,
     required: false,

@@ -8,7 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
-import { UpdateOrderStatusDto } from './dto/orders.dto';
+import { ConfirmOrderPaymentDto, UpdateOrderStatusDto } from './dto/orders.dto';
 import { Product } from '@modules/menu/entities/product.entity';
 import { ActorInfo, KitchenGateway } from '@modules/kitchen/kitchen.gateway';
 import { Table } from '@modules/tables/entities/table.entity';
@@ -23,7 +23,7 @@ import { OrderStatus } from './entities/order-status.enum';
 import { OrderType } from './entities/order-type.enum';
 import { Business } from '@modules/business/entities/business.entity';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
-import { OrderTransitionService } from './order-transition.service';
+import { OrderTransitionService, TransitionActor } from './order-transition.service';
 import { ProcessPaymentDto } from './dto/process-payment.dto';
 import { Payment } from '@modules/payments/entities/payment.entity';
 import {
@@ -151,7 +151,7 @@ export class OrdersService {
         ],
       })) as Order;
 
-      this.kitchenGateway.broadcastOrderUpdate(createdOrder, null, SYSTEM_ACTOR);
+      this.kitchenGateway.emitOrderCreated(createdOrder);
 
       if (business.features?.includes(BusinessFeature.QR_ORDERING)) {
         createdOrder = await this.transitionOrder(createdOrder, OrderStatus.CONFIRMED);
@@ -262,7 +262,7 @@ export class OrdersService {
       relations: ['items', 'items.product', 'table', 'tableSession'],
     })) as Order;
 
-    this.kitchenGateway.broadcastOrderUpdate(order, null, SYSTEM_ACTOR);
+    this.kitchenGateway.emitOrderCreated(order);
     void this.tableSessionsService.bumpExpiresAt(session.id).catch(() => undefined);
 
     if (captureTiming === CaptureTiming.ON_PREMISE) {
@@ -400,7 +400,7 @@ export class OrdersService {
         ],
       })) as Order;
 
-      this.kitchenGateway.broadcastOrderUpdate(createdOrder, null, SYSTEM_ACTOR);
+      this.kitchenGateway.emitOrderCreated(createdOrder);
       createdOrder = await this.transitionOrder(createdOrder, OrderStatus.CONFIRMED);
       createdOrder = await this.transitionOrder(createdOrder, OrderStatus.IN_KITCHEN);
 
@@ -565,6 +565,29 @@ export class OrdersService {
     return this.transitionOrder(order, dto.status, actor);
   }
 
+  async cancelBySession(orderId: string, sessionToken: string): Promise<Order> {
+    const order = await this.orderRepository.findOne({
+      where: { id: orderId },
+      relations: [
+        'items',
+        'items.product',
+        'items.product.kitchenStation',
+        'table',
+        'tableSession',
+      ],
+    });
+
+    if (!order) throw new NotFoundException('Order not found');
+    if (!order.tableSession || order.tableSession.sessionToken !== sessionToken) {
+      throw new ForbiddenException('Session does not own this order');
+    }
+    if (order.status !== OrderStatus.CREATED) {
+      throw new BadRequestException('Order can only be cancelled while pending confirmation');
+    }
+
+    return this.transitionOrder(order, OrderStatus.CANCELLED, { type: 'system', id: 'customer' });
+  }
+
   async processCashPayment(
     businessId: string,
     orderId: string,
@@ -648,14 +671,21 @@ export class OrdersService {
     next: OrderStatus,
     actor: ActorInfo = SYSTEM_ACTOR,
   ): Promise<Order> {
-    this.orderTransitionService.assertTransition(order.type, order.status, next);
-    const previousStatus = order.status;
-    order.status = next;
+    const transitionActor = this.resolveTransitionActor(actor);
+    // transition() validates, sets status, and stamps milestone timestamps
+    this.orderTransitionService.transition(order, next, transitionActor);
     const updatedOrder = await this.orderRepository.save(order);
-    this.kitchenGateway.broadcastOrderUpdate(updatedOrder, previousStatus, actor);
+    this.dispatchOrderEvent(updatedOrder, next);
 
     if (updatedOrder.tableSessionId) {
       await this.tableSessionsService.refreshLifecycle(updatedOrder.tableSessionId);
+    }
+
+    // When an order is served (DINE_IN), open a payment record for the cashier queue.
+    if (next === OrderStatus.DELIVERED) {
+      void this.openPaymentForCashier(updatedOrder).catch((err) =>
+        console.error('Failed to open cashier payment', err),
+      );
     }
 
     // When an order is closed, increment totalOrderCount on products in a single grouped UPDATE
@@ -684,5 +714,111 @@ export class OrdersService {
     }
 
     return updatedOrder;
+  }
+
+  /**
+   * POST /orders/:id/payment/confirm — cashier confirms the pending payment
+   * that was auto-created when the order was served (READY → DELIVERED).
+   * Transitions DELIVERED → CLOSED and emits 'order:paid'.
+   */
+  async confirmOrderPayment(
+    businessId: string,
+    orderId: string,
+    staffId: string | null,
+    dto: ConfirmOrderPaymentDto = {},
+  ): Promise<Order> {
+    const order = await this.findOne(businessId, orderId);
+    if (order.status !== OrderStatus.DELIVERED) {
+      throw new BadRequestException(
+        `Order must be DELIVERED to confirm payment (current: ${order.status})`,
+      );
+    }
+
+    const payment = await this.paymentRepository.findOne({
+      where: { orderId: order.id, businessId, status: PaymentStatus.PENDING },
+    });
+    if (!payment) throw new NotFoundException('No pending payment found for this order');
+
+    if (dto.method) payment.method = dto.method;
+    if (dto.tipAmount) {
+      order.tipAmount = Number(dto.tipAmount);
+      await this.orderRepository.save(order);
+    }
+
+    return this.closeWithPayment(order, payment, staffId);
+  }
+
+  private async openPaymentForCashier(order: Order): Promise<void> {
+    const [business, fullOrder] = await Promise.all([
+      this.businessRepository.findOne({ where: { id: order.businessId } }),
+      this.orderRepository.findOne({
+        where: { id: order.id },
+        relations: ['tableSession'],
+      }),
+    ]);
+    if (!business || !fullOrder) return;
+
+    const amount = Number(fullOrder.totalAmount);
+    const payment = await this.paymentRepository.save(
+      this.paymentRepository.create({
+        businessId: fullOrder.businessId,
+        orderId: fullOrder.id,
+        method: PaymentMethod.POS,
+        status: PaymentStatus.PENDING,
+        amount,
+      }),
+    );
+
+    this.kitchenGateway.emitPaymentOpen(fullOrder, payment.id, amount);
+
+    if (business.posAutoAcceptPayment) {
+      await this.closeWithPayment(fullOrder, payment, null);
+    }
+  }
+
+  private async closeWithPayment(
+    order: Order,
+    payment: Payment,
+    staffId: string | null,
+  ): Promise<Order> {
+    payment.status = PaymentStatus.CONFIRMED;
+    payment.confirmedAt = new Date();
+    payment.confirmedById = staffId;
+    await this.paymentRepository.save(payment);
+
+    order.paymentStatus = OrderPaymentStatus.PAID;
+    await this.orderRepository.save(order);
+
+    const closed = await this.transitionOrder(order, OrderStatus.CLOSED);
+    this.kitchenGateway.emitOrderPaid(closed, payment.id);
+
+    return closed;
+  }
+
+  private resolveTransitionActor(actor: ActorInfo): TransitionActor {
+    if (actor.type === 'system') return 'system';
+    if (actor.type === 'owner') return StaffRole.MANAGER;
+    return (actor.role as TransitionActor | undefined) ?? 'system';
+  }
+
+  private dispatchOrderEvent(order: Order, next: OrderStatus): void {
+    switch (next) {
+      case OrderStatus.CONFIRMED:
+        this.kitchenGateway.emitOrderConfirmed(order);
+        break;
+      case OrderStatus.IN_KITCHEN:
+        this.kitchenGateway.emitOrderPreparing(order);
+        break;
+      case OrderStatus.READY:
+        this.kitchenGateway.emitOrderReady(order);
+        break;
+      case OrderStatus.DELIVERED:
+        this.kitchenGateway.emitOrderServed(order);
+        break;
+      case OrderStatus.CANCELLED:
+        this.kitchenGateway.emitOrderCancelled(order);
+        break;
+      // CLOSED / PAYMENT_FAILED / REFUNDED handled by payment flow (Part 3)
+    }
   }
 }
