@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { MenuCategory } from './entities/category.entity';
@@ -202,6 +202,36 @@ export class MenuService {
       .addOrderBy('grp.position', 'ASC')
       .addOrderBy('mod.position', 'ASC')
       .getMany();
+  }
+
+  async reorderProductImages(
+    businessId: string,
+    productId: string,
+    imageUrls: string[],
+  ): Promise<Product> {
+    const product = await this.findProduct(businessId, productId);
+
+    if (imageUrls.length !== product.imageUrls.length) {
+      throw new BadRequestException(
+        'imageUrls must contain all existing product image URLs — no additions or omissions allowed',
+      );
+    }
+
+    const current = new Set(product.imageUrls);
+    for (const url of imageUrls) {
+      if (!current.has(url)) {
+        throw new BadRequestException(`Image URL does not belong to this product: ${url}`);
+      }
+    }
+
+    await this.productRepository.update(
+      { id: productId, businessId },
+      {
+        imageUrls,
+        imageUrl: imageUrls[0] ?? null,
+      },
+    );
+    return this.findProduct(businessId, productId);
   }
 
   async syncModifierGroups(

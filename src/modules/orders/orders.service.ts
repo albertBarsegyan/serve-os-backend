@@ -140,7 +140,7 @@ export class OrdersService {
       await queryRunner.manager.save(orderItems);
       await queryRunner.commitTransaction();
 
-      let createdOrder = (await this.orderRepository.findOne({
+      const createdOrder = (await this.orderRepository.findOne({
         where: { id: savedOrder.id },
         relations: [
           'items',
@@ -153,10 +153,10 @@ export class OrdersService {
 
       this.kitchenGateway.emitOrderCreated(createdOrder);
 
-      if (business.features?.includes(BusinessFeature.QR_ORDERING)) {
-        createdOrder = await this.transitionOrder(createdOrder, OrderStatus.CONFIRMED);
-        createdOrder = await this.transitionOrder(createdOrder, OrderStatus.IN_KITCHEN);
-      }
+      // if (business.features?.includes(BusinessFeature.QR_ORDERING)) {
+      //   createdOrder = await this.transitionOrder(createdOrder, OrderStatus.CONFIRMED);
+      //   createdOrder = await this.transitionOrder(createdOrder, OrderStatus.IN_KITCHEN);
+      // }
 
       // Bump session expiry so active customers aren't kicked out mid-meal
       void this.tableSessionsService.bumpExpiresAt(tableSession.id).catch(() => undefined);
@@ -304,7 +304,6 @@ export class OrdersService {
       order.paymentStatus = OrderPaymentStatus.PAID;
       await this.orderRepository.save(order);
       const afterConfirm = await this.transitionOrder(order, OrderStatus.CONFIRMED);
-      await this.transitionOrder(afterConfirm, OrderStatus.IN_KITCHEN);
       return { order: afterConfirm };
     }
 
@@ -402,7 +401,6 @@ export class OrdersService {
 
       this.kitchenGateway.emitOrderCreated(createdOrder);
       createdOrder = await this.transitionOrder(createdOrder, OrderStatus.CONFIRMED);
-      createdOrder = await this.transitionOrder(createdOrder, OrderStatus.IN_KITCHEN);
 
       return createdOrder;
     } catch (err) {
@@ -424,8 +422,7 @@ export class OrdersService {
         `Only CREATED orders can be confirmed by staff (current: ${order.status})`,
       );
     }
-    const confirmed = await this.transitionOrder(order, OrderStatus.CONFIRMED, actor);
-    return this.transitionOrder(confirmed, OrderStatus.IN_KITCHEN, actor);
+    return this.transitionOrder(order, OrderStatus.CONFIRMED, actor);
   }
 
   /**
@@ -507,8 +504,7 @@ export class OrdersService {
           'tableSession',
         ],
       })) as Order;
-      const confirmed = await this.transitionOrder(fullOrder, OrderStatus.CONFIRMED);
-      saved = await this.transitionOrder(confirmed, OrderStatus.IN_KITCHEN);
+      saved = await this.transitionOrder(fullOrder, OrderStatus.CONFIRMED);
     } else if (
       saved.status === OrderStatus.DELIVERED ||
       (saved.type === OrderType.TAKEAWAY && saved.status === OrderStatus.READY)
@@ -622,6 +618,38 @@ export class OrdersService {
     return this.transitionOrder(order, OrderStatus.REFUNDED);
   }
 
+  /**
+   * POST /orders/:id/payment/confirm — cashier confirms the pending payment
+   * that was auto-created when the order was served (READY → DELIVERED).
+   * Transitions DELIVERED → CLOSED and emits 'order:paid'.
+   */
+  async confirmOrderPayment(
+    businessId: string,
+    orderId: string,
+    staffId: string | null,
+    dto: ConfirmOrderPaymentDto = {},
+  ): Promise<Order> {
+    const order = await this.findOne(businessId, orderId);
+    if (order.status !== OrderStatus.DELIVERED) {
+      throw new BadRequestException(
+        `Order must be DELIVERED to confirm payment (current: ${order.status})`,
+      );
+    }
+
+    const payment = await this.paymentRepository.findOne({
+      where: { orderId: order.id, businessId, status: PaymentStatus.PENDING },
+    });
+    if (!payment) throw new NotFoundException('No pending payment found for this order');
+
+    if (dto.method) payment.method = dto.method;
+    if (dto.tipAmount) {
+      order.tipAmount = Number(dto.tipAmount);
+      await this.orderRepository.save(order);
+    }
+
+    return this.closeWithPayment(order, payment, staffId);
+  }
+
   private async processStaffPayment(
     businessId: string,
     orderId: string,
@@ -714,38 +742,6 @@ export class OrdersService {
     }
 
     return updatedOrder;
-  }
-
-  /**
-   * POST /orders/:id/payment/confirm — cashier confirms the pending payment
-   * that was auto-created when the order was served (READY → DELIVERED).
-   * Transitions DELIVERED → CLOSED and emits 'order:paid'.
-   */
-  async confirmOrderPayment(
-    businessId: string,
-    orderId: string,
-    staffId: string | null,
-    dto: ConfirmOrderPaymentDto = {},
-  ): Promise<Order> {
-    const order = await this.findOne(businessId, orderId);
-    if (order.status !== OrderStatus.DELIVERED) {
-      throw new BadRequestException(
-        `Order must be DELIVERED to confirm payment (current: ${order.status})`,
-      );
-    }
-
-    const payment = await this.paymentRepository.findOne({
-      where: { orderId: order.id, businessId, status: PaymentStatus.PENDING },
-    });
-    if (!payment) throw new NotFoundException('No pending payment found for this order');
-
-    if (dto.method) payment.method = dto.method;
-    if (dto.tipAmount) {
-      order.tipAmount = Number(dto.tipAmount);
-      await this.orderRepository.save(order);
-    }
-
-    return this.closeWithPayment(order, payment, staffId);
   }
 
   private async openPaymentForCashier(order: Order): Promise<void> {

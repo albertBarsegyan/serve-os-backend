@@ -115,6 +115,6 @@ export class TableSessionsController {
   @Post(':id/close')
   @ApiOperation({ summary: 'Close table session when all orders are settled' })
   close(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthenticatedRequest) {
-    return this.tableSessionsService.closeSession(id, req?.authPayload);
+    return this.tableSessionsService.closeSession(id, req.user);
   }
 }

@@ -17,7 +17,7 @@ const ROLE_TRANSITIONS: Partial<Record<OrderStatus, TransitionActor[]>> = {
   [OrderStatus.CONFIRMED]: [StaffRole.WAITER, StaffRole.MANAGER, 'system'],
   [OrderStatus.IN_KITCHEN]: [StaffRole.KITCHEN, StaffRole.MANAGER, 'system'],
   [OrderStatus.READY]: [StaffRole.KITCHEN, StaffRole.MANAGER, 'system'],
-  [OrderStatus.DELIVERED]: [StaffRole.WAITER, StaffRole.MANAGER, 'system'],
+  [OrderStatus.DELIVERED]: [StaffRole.WAITER, StaffRole.KITCHEN, StaffRole.MANAGER, 'system'],
   [OrderStatus.CLOSED]: [StaffRole.CASHIER, StaffRole.MANAGER, 'system'],
   [OrderStatus.PAYMENT_FAILED]: ['system'],
   [OrderStatus.REFUNDED]: ['system'],
