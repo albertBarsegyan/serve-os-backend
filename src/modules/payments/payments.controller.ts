@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -7,9 +7,9 @@ import { TenantGuard } from '@common/guards/tenant.guard';
 import { PermissionGuard } from '@common/guards/permission.guard';
 import { Public } from '@common/decorators/public.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
-import { AuthUser } from '@common/decorators/auth-user.decorator';
 import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
+import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 
 @ApiTags('Payments')
 @ApiBearerAuth()
@@ -40,8 +40,9 @@ export class PaymentsController {
   confirm(
     @Tenant(true) businessId: string,
     @Param('id') id: string,
-    @AuthUser() authUser: { id: string },
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.paymentsService.confirmPayment(id, businessId, authUser.id);
+    const staffId = req.user?.type === 'staff' ? req.user.staffId : null;
+    return this.paymentsService.confirmPayment(id, businessId, staffId);
   }
 }

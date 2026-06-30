@@ -20,6 +20,7 @@ import {
   SyncModifierGroupsDto,
   UpdateProductAvailabilityDto,
 } from './dto/menu.dto';
+import { ReorderProductImagesDto } from './dto/reorder-product-images.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { Roles } from '@common/decorators/roles.decorator';
@@ -121,6 +122,16 @@ export class MenuController {
     @Body() dto: UpdateProductAvailabilityDto,
   ) {
     return this.menuService.updateProductAvailability(businessId, id, dto.isAvailable);
+  }
+
+  @Patch('products/:id/images/reorder')
+  @ApiOperation({ summary: 'Reorder product images; index 0 becomes the main/cover image' })
+  reorderProductImages(
+    @Tenant(true) businessId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReorderProductImagesDto,
+  ) {
+    return this.menuService.reorderProductImages(businessId, id, dto.imageUrls);
   }
 
   @Delete('products/:id')
