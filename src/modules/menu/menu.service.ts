@@ -105,11 +105,23 @@ export class MenuService {
     return this.productRepository.save(product);
   }
 
-  async findAllProducts(businessId: string): Promise<Product[]> {
-    return this.productRepository.find({
-      where: { businessId },
+  async findAllProducts(
+    businessId: string,
+    pagination: { page: number; limit: number },
+    filters?: { categoryId?: string; availableOnly?: boolean },
+  ): Promise<import('@common/types/paginated-response.type').PaginatedResponse<Product>> {
+    const { page, limit } = pagination;
+    const where: Record<string, unknown> = { businessId };
+    if (filters?.categoryId) where['categoryId'] = filters.categoryId;
+    if (filters?.availableOnly) where['isAvailable'] = true;
+    const [data, total] = await this.productRepository.findAndCount({
+      where,
       relations: ['category', 'kitchenStation'],
+      order: { sortOrder: 'ASC', createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async findProduct(businessId: string, id: string): Promise<Product> {

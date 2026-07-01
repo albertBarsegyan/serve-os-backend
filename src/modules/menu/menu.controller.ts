@@ -10,6 +10,9 @@ import {
   Query,
   ParseUUIDPipe,
   UseGuards,
+  ParseBoolPipe,
+  DefaultValuePipe,
+  Optional,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { MenuService } from './menu.service';
@@ -22,6 +25,7 @@ import {
 } from './dto/menu.dto';
 import { ReorderProductImagesDto } from './dto/reorder-product-images.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
+import { PaginationDto } from '@common/dto/pagination.dto';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { Roles } from '@common/decorators/roles.decorator';
 import { Public } from '@common/decorators/public.decorator';
@@ -91,9 +95,14 @@ export class MenuController {
 
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.KITCHEN)
   @Get('products')
-  @ApiOperation({ summary: 'Get all products for the business' })
-  findAllProducts(@Tenant(true) businessId: string) {
-    return this.menuService.findAllProducts(businessId);
+  @ApiOperation({ summary: 'Get paginated products for the business' })
+  findAllProducts(
+    @Tenant(true) businessId: string,
+    @Query() pagination: PaginationDto,
+    @Query('categoryId') categoryId?: string,
+    @Query('availableOnly', new DefaultValuePipe(false), ParseBoolPipe) availableOnly?: boolean,
+  ) {
+    return this.menuService.findAllProducts(businessId, pagination, { categoryId, availableOnly });
   }
 
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.KITCHEN)

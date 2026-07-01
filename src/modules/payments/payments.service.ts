@@ -106,11 +106,19 @@ export class PaymentsService {
     return this.paymentRepository.findOne({ where: { providerRef } });
   }
 
-  async findAll(businessId: string): Promise<Payment[]> {
-    return this.paymentRepository.find({
+  async findAll(
+    businessId: string,
+    pagination: { page: number; limit: number },
+  ): Promise<import('@common/types/paginated-response.type').PaginatedResponse<Payment>> {
+    const { page, limit } = pagination;
+    const [data, total] = await this.paymentRepository.findAndCount({
       where: { businessId },
       relations: ['order'],
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   private confirmOnlinePayment(paymentId: string, businessId: string) {
