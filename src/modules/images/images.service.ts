@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
@@ -127,10 +132,25 @@ export class ImagesService {
     return this.imageRepository.save(image);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(
+    id: string,
+    caller: { businessId: string | null; uploaderId: string | null },
+  ): Promise<void> {
     const image = await this.imageRepository.findOne({ where: { id } });
     if (!image) {
       throw new NotFoundException(`Image ${id} not found`);
+    }
+
+    // Business-scoped assets (logos, category/product/table photos) must match the
+    // caller's own business. Images with no business (user/staff avatars) fall back to
+    // uploader identity, since those aren't tied to any tenant.
+    const authorized =
+      image.businessId !== null
+        ? image.businessId === caller.businessId
+        : image.uploadedBy !== null && image.uploadedBy === caller.uploaderId;
+
+    if (!authorized) {
+      throw new ForbiddenException('You do not have access to this image');
     }
 
     // Delete DB row first. If S3 deletion fails, the orphaned object is preferable

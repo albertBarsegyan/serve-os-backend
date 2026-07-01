@@ -20,6 +20,7 @@ import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.
 import { TableSessionsService } from './table-sessions.service';
 import { ScanSessionDto } from './dto/scan-session.dto';
 import { TenantGuard } from '@common/guards/tenant.guard';
+import { Tenant } from '@common/decorators/tenant.decorator';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import { Roles } from '@common/decorators/roles.decorator';
 import { Role } from '@common/enums/role.enum';
@@ -114,12 +115,13 @@ export class TableSessionsController {
     });
   }
 
-  @Public()
-  @AllowWithoutBusiness()
+  @ApiBearerAuth()
+  @UseGuards(TenantGuard)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Get(':sessionId/bill')
-  @ApiOperation({ summary: 'Get split bill grouped by session token' })
-  getBill(@Param('sessionId', ParseUUIDPipe) sessionId: string) {
-    return this.tableSessionsService.getBillBySession(sessionId);
+  @ApiOperation({ summary: 'Get split bill grouped by session token (staff/owner only)' })
+  getBill(@Param('sessionId', ParseUUIDPipe) sessionId: string, @Tenant(true) businessId: string) {
+    return this.tableSessionsService.getBillBySession(sessionId, businessId);
   }
 
   @ApiBearerAuth()

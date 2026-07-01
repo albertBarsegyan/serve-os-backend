@@ -178,9 +178,9 @@ export class TableSessionsService {
     return session;
   }
 
-  async getBillBySession(sessionId: string) {
+  async getBillBySession(sessionId: string, businessId: string) {
     const session = await this.tableSessionRepository.findOne({
-      where: { id: sessionId },
+      where: { id: sessionId, businessId },
     });
 
     if (!session) {
