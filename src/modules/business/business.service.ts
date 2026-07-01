@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Business } from './entities/business.entity';
@@ -49,6 +54,11 @@ export class BusinessService {
 
       const businessRepository = manager.getRepository(Business);
       const userRepository = manager.getRepository(User);
+
+      const existingBusiness = await businessRepository.findOne({ where: { slug } });
+      if (existingBusiness) {
+        throw new ConflictException('A business with this name already exists');
+      }
 
       const business = businessRepository.create({
         ...createBusinessDto,
