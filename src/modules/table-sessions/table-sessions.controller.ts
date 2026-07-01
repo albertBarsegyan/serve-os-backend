@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { ConfigService } from '@nestjs/config';
 import * as express from 'express';
 import { Public } from '@common/decorators/public.decorator';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
@@ -23,6 +24,7 @@ import type { AuthenticatedRequest } from '@common/types/authenticated-request.t
 import { Roles } from '@common/decorators/roles.decorator';
 import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
+import { setBusinessCookie } from '@common/utils/business.utils';
 
 const SESSION_COOKIE_MAX_AGE = 28800 * 1000; // 8 hours in ms
 const SESSION_THROTTLE = { default: { limit: 20, ttl: 60000 } };
@@ -30,7 +32,10 @@ const SESSION_THROTTLE = { default: { limit: 20, ttl: 60000 } };
 @ApiTags('Table Sessions')
 @Controller('sessions')
 export class TableSessionsController {
-  constructor(private readonly tableSessionsService: TableSessionsService) {}
+  constructor(
+    private readonly tableSessionsService: TableSessionsService,
+    private readonly configService: ConfigService,
+  ) {}
 
   /** Primary guest session creation endpoint used by the QR flow. */
   @Public()
@@ -91,14 +96,22 @@ export class TableSessionsController {
   }
 
   private setSessionCookies(res: express.Response, sessionToken: string, businessId: string) {
-    const cookieOpts = {
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+
+    res.cookie('customer_session_token', sessionToken, {
       httpOnly: true,
-      sameSite: 'lax' as const,
+      sameSite: 'lax',
       path: '/',
       maxAge: SESSION_COOKIE_MAX_AGE,
-    };
-    res.cookie('customer_session_token', sessionToken, cookieOpts);
-    res.cookie('business_id', businessId, cookieOpts);
+    });
+
+    setBusinessCookie({
+      res,
+      businessId,
+      isProduction,
+      domain: this.configService.get<string>('COOKIE_DOMAIN'),
+      maxAge: SESSION_COOKIE_MAX_AGE,
+    });
   }
 
   @Public()
