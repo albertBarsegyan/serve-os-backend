@@ -100,7 +100,21 @@ export class ImagesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete an image (removes DB row and S3 object)' })
   @ApiResponse({ status: 204, description: 'Image deleted' })
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.imagesService.remove(id);
+  @ApiResponse({ status: 403, description: 'Image belongs to a different business or uploader' })
+  remove(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthenticatedRequest) {
+    const payload = req.user;
+
+    let businessId: string | null = req.businessId ?? null;
+    let uploaderId: string | null = null;
+
+    if (payload?.type === 'owner') {
+      uploaderId = payload.userId;
+      // businessId already populated by TenantMiddleware from the business_id cookie
+    } else if (payload?.type === 'staff') {
+      businessId = payload.businessId;
+      uploaderId = payload.staffId;
+    }
+
+    return this.imagesService.remove(id, { businessId, uploaderId });
   }
 }

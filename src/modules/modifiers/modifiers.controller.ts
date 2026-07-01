@@ -18,13 +18,13 @@ import { CreateModifierItemDto } from './dto/create-modifier.dto';
 import { UnifiedAuthGuard } from '@modules/auth/guards/unified-auth.guard';
 import { GetAuthPayload } from '@modules/auth/decorators/auth-payload.decorator';
 import type { AuthPayload } from '@modules/auth/types/auth-payload.type';
-import { TenantGuard } from '@common/guards/tenant.guard';
+import { BusinessAccessGuard } from '@common/guards/business-access.guard';
 import { Roles } from '@common/decorators/roles.decorator';
 import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
 
 @Controller('businesses/:businessId/modifier-groups')
-@UseGuards(UnifiedAuthGuard, TenantGuard)
+@UseGuards(UnifiedAuthGuard, BusinessAccessGuard)
 @Roles(Role.OWNER, StaffRole.MANAGER)
 export class ModifiersController {
   constructor(private modifiersService: ModifiersService) {}

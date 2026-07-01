@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { JwtModule } from '@nestjs/jwt';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { KitchenGateway } from './kitchen.gateway';
 import { KitchenService } from './kitchen.service';
 import { KitchenController } from './kitchen.controller';
@@ -12,7 +14,16 @@ import { PermissionGuard } from '@common/guards/permission.guard';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Order, KitchenStation, Business, Staff, TableSession])],
+  imports: [
+    TypeOrmModule.forFeature([Order, KitchenStation, Business, Staff, TableSession]),
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'),
+      }),
+    }),
+  ],
   providers: [TenantAccessService, KitchenGateway, KitchenService, PermissionGuard],
   controllers: [KitchenController],
   exports: [KitchenGateway],

@@ -11,10 +11,13 @@ import { Server, Socket } from 'socket.io';
 import { PinoLogger } from 'nestjs-pino';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { JwtService } from '@nestjs/jwt';
 import { Order } from '@modules/orders/entities/order.entity';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
+import { Business } from '@modules/business/entities/business.entity';
 import { OrderStatus } from '@modules/orders/entities/order-status.enum';
 import { CustomerOrderStatus, toCustomerStatus } from '@modules/orders/customer-order-status';
+import type { AuthPayload } from '@modules/auth/types/auth-payload.type';
 
 export interface ActorInfo {
   type: 'owner' | 'staff' | 'system';
@@ -86,8 +89,11 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
 
   constructor(
     private readonly logger: PinoLogger,
+    private readonly jwtService: JwtService,
     @InjectRepository(TableSession)
     private readonly tableSessionRepository: Repository<TableSession>,
+    @InjectRepository(Business)
+    private readonly businessRepository: Repository<Business>,
   ) {}
 
   handleConnection(client: Socket) {
@@ -98,8 +104,54 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.logger.info({ clientId: client.id }, 'Kitchen client disconnected');
   }
 
+  /**
+   * join-kitchen / join-business grant a live feed of a business's orders and payments,
+   * so the caller must be authenticated (owner/staff access_token cookie forwarded via
+   * withCredentials) and must actually belong to the businessId it asks to join —
+   * otherwise any socket could snoop on another tenant's POS stream by guessing its id.
+   */
+  private async authenticate(client: Socket): Promise<AuthPayload | null> {
+    const cookieHeader = client.handshake.headers.cookie;
+    if (!cookieHeader) return null;
+
+    const token = cookieHeader
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith('access_token='))
+      ?.slice('access_token='.length);
+
+    if (!token) return null;
+
+    try {
+      return await this.jwtService.verifyAsync<AuthPayload>(decodeURIComponent(token));
+    } catch {
+      return null;
+    }
+  }
+
+  private async canAccessBusiness(payload: AuthPayload, businessId: string): Promise<boolean> {
+    if (payload.type === 'owner') {
+      const business = await this.businessRepository.findOne({
+        where: { id: businessId, ownerId: payload.userId },
+      });
+      return !!business;
+    }
+
+    if (payload.type === 'staff') {
+      return payload.businessId === businessId;
+    }
+
+    return false;
+  }
+
   @SubscribeMessage('join-kitchen')
   async handleJoinKitchen(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
+    const payload = await this.authenticate(client);
+    if (!payload || !(await this.canAccessBusiness(payload, businessId))) {
+      this.logger.warn({ clientId: client.id, businessId }, 'Rejected unauthorized join-kitchen');
+      return { event: 'error', data: 'Unauthorized' };
+    }
+
     await client.join(`kitchen:${businessId}`);
     this.logger.debug({ clientId: client.id, businessId }, 'Kitchen client joined room');
     return { event: 'joined', data: businessId };
@@ -107,6 +159,12 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
 
   @SubscribeMessage('join-business')
   async handleJoinBusiness(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
+    const payload = await this.authenticate(client);
+    if (!payload || !(await this.canAccessBusiness(payload, businessId))) {
+      this.logger.warn({ clientId: client.id, businessId }, 'Rejected unauthorized join-business');
+      return { event: 'error', data: 'Unauthorized' };
+    }
+
     await client.join(`business:${businessId}`);
     return { event: 'joined', data: businessId };
   }
