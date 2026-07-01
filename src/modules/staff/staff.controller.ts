@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -19,6 +20,7 @@ import type { Response } from 'express';
 import { StaffService } from './staff.service';
 import { AuthGuard } from '@nestjs/passport';
 import { BusinessAccessGuard } from '@common/guards/business-access.guard';
+import { PaginationDto } from '@common/dto/pagination.dto';
 import { Public } from '@common/decorators/public.decorator';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import {
@@ -161,9 +163,9 @@ export class StaffController {
   @Get('businesses/:businessId/staff')
   @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get all staff for a business' })
-  async findAll(@Param('businessId') businessId: string) {
-    return this.staffService.findAll(businessId);
+  @ApiOperation({ summary: 'Get paginated staff for a business' })
+  async findAll(@Param('businessId') businessId: string, @Query() pagination: PaginationDto) {
+    return this.staffService.findAll(businessId, pagination);
   }
 
   @Get('businesses/:businessId/staff/:staffId')

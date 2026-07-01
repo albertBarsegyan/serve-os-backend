@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -25,6 +26,7 @@ import { BusinessFeature } from '@common/enums/business-feature.enum';
 import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
+import { PaginationDto } from '@common/dto/pagination.dto';
 import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
 import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
@@ -86,9 +88,9 @@ export class OrdersController {
   )
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Get()
-  @ApiOperation({ summary: 'Get all orders for the business' })
-  findAll(@Tenant(true) businessId: string) {
-    return this.ordersService.findAll(businessId);
+  @ApiOperation({ summary: 'Get paginated orders for the business' })
+  findAll(@Tenant(true) businessId: string, @Query() pagination: PaginationDto) {
+    return this.ordersService.findAll(businessId, pagination);
   }
 
   @RequireBusinessFeature(

@@ -347,11 +347,18 @@ export class StaffService {
   /**
    * Get all staff for a business
    */
-  async findAll(businessId: string): Promise<Staff[]> {
-    return this.staffRepository.find({
+  async findAll(
+    businessId: string,
+    pagination: { page: number; limit: number },
+  ): Promise<import('@common/types/paginated-response.type').PaginatedResponse<Staff>> {
+    const { page, limit } = pagination;
+    const [data, total] = await this.staffRepository.findAndCount({
       where: { businessId },
       order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async update(staffId: string, businessId: string, dto: UpdateStaffDto): Promise<Staff> {

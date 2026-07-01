@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Body, Patch, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
+import { PaginationDto } from '@common/dto/pagination.dto';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { PermissionGuard } from '@common/guards/permission.guard';
@@ -28,9 +29,9 @@ export class PaymentsController {
 
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
   @Get()
-  @ApiOperation({ summary: 'Get all payments for the business' })
-  findAll(@Tenant(true) businessId: string) {
-    return this.paymentsService.findAll(businessId);
+  @ApiOperation({ summary: 'Get paginated payments for the business' })
+  findAll(@Tenant(true) businessId: string, @Query() pagination: PaginationDto) {
+    return this.paymentsService.findAll(businessId, pagination);
   }
 
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)

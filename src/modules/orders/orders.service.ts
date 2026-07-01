@@ -515,12 +515,19 @@ export class OrdersService {
     return saved;
   }
 
-  async findAll(businessId: string): Promise<Order[]> {
-    return this.orderRepository.find({
+  async findAll(
+    businessId: string,
+    pagination: { page: number; limit: number },
+  ): Promise<import('@common/types/paginated-response.type').PaginatedResponse<Order>> {
+    const { page, limit } = pagination;
+    const [data, total] = await this.orderRepository.findAndCount({
       where: { businessId },
       relations: ['items', 'items.product', 'items.product.kitchenStation', 'table'],
       order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async findOne(businessId: string, id: string): Promise<Order> {
