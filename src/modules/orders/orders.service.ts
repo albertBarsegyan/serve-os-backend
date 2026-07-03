@@ -15,7 +15,10 @@ import { ActorInfo, KitchenGateway } from '@modules/kitchen/kitchen.gateway';
 import { Table } from '@modules/tables/entities/table.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
-import { TableSessionsService } from '@modules/table-sessions/table-sessions.service';
+import {
+  OPEN_ORDER_STATUSES,
+  TableSessionsService,
+} from '@modules/table-sessions/table-sessions.service';
 import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
 import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
@@ -489,7 +492,11 @@ export class OrdersService {
 
     if (saved.paymentStatus !== OrderPaymentStatus.PAID) return saved;
 
-    // PREPAID: order was waiting on payment before kitchen could start
+    // PREPAID: order was waiting on payment before kitchen could start.
+    // transitionOrder now locks the row and re-validates against the committed status, so a
+    // concurrent call advancing the same order (e.g. a duplicate webhook delivery racing the
+    // reconcile poller) throws BadRequestException instead of double-transitioning and
+    // double-emitting — that's expected here and treated as an idempotent no-op.
     if (saved.status === OrderStatus.CREATED) {
       const fullOrder = (await this.orderRepository.findOne({
         where: { id: saved.id },
@@ -501,20 +508,28 @@ export class OrdersService {
           'tableSession',
         ],
       })) as Order;
-      saved = await this.transitionOrder(fullOrder, OrderStatus.CONFIRMED);
+      try {
+        saved = await this.transitionOrder(fullOrder, OrderStatus.CONFIRMED);
+      } catch (err) {
+        if (!(err instanceof BadRequestException)) throw err;
+        saved = (await this.orderRepository.findOne({ where: { id: saved.id } })) as Order;
+      }
     } else if (
       saved.status === OrderStatus.DELIVERED ||
       (saved.type === OrderType.TAKEAWAY && saved.status === OrderStatus.READY)
     ) {
-      saved = await this.transitionOrder(saved, OrderStatus.CLOSED);
-      // transitionOrder/dispatchOrderEvent has no CLOSED case (that status is normally
-      // reached via closeWithPayment, which emits explicitly) — emit here too so an
-      // online payment auto-closing the order isn't a silent, unbroadcast transition.
       const latestPayment = await this.paymentRepository.findOne({
         where: { orderId: saved.id, status: PaymentStatus.CONFIRMED },
         order: { confirmedAt: 'DESC' },
       });
-      this.kitchenGateway.emitOrderPaid(saved, latestPayment?.id ?? '');
+      try {
+        saved = await this.transitionOrder(saved, OrderStatus.CLOSED, SYSTEM_ACTOR, (closed) =>
+          this.kitchenGateway.emitOrderPaid(closed, latestPayment?.id ?? ''),
+        );
+      } catch (err) {
+        if (!(err instanceof BadRequestException)) throw err;
+        saved = (await this.orderRepository.findOne({ where: { id: saved.id } })) as Order;
+      }
     }
 
     return saved;
@@ -719,28 +734,86 @@ export class OrdersService {
 
     order.tipAmount = Number(dto.tipAmount ?? 0);
     order.paymentStatus = OrderPaymentStatus.PAID;
+    // Must persist before transitionOrder, which now re-fetches+locks its own copy of the
+    // row rather than saving this in-memory object — an unsaved mutation here would be lost.
+    await this.orderRepository.save(order);
 
-    const closed = await this.transitionOrder(order, OrderStatus.CLOSED);
-    // transitionOrder/dispatchOrderEvent has no CLOSED case (see closeWithPayment /
-    // recomputeAndAdvance) — emit here too so a staff cash/POS payment isn't a silent,
-    // unbroadcast transition that leaves the customer's session stuck on "ready"/"served".
-    this.kitchenGateway.emitOrderPaid(closed, payment.id);
-
-    return closed;
+    // order:paid must reach clients before any session-closed emitted by refreshLifecycle
+    // as a side effect of this same transition, so it's fired from onDispatched rather than
+    // after transitionOrder returns.
+    return this.transitionOrder(order, OrderStatus.CLOSED, SYSTEM_ACTOR, (closed) =>
+      this.kitchenGateway.emitOrderPaid(closed, payment.id),
+    );
   }
 
+  /**
+   * Re-fetches and locks the order row before validating/applying the transition, so two
+   * concurrent transitions on the same order (e.g. a waiter cancelling while kitchen advances
+   * it) serialize instead of both reading stale in-memory state and both emitting a broadcast
+   * that disagrees with whichever save actually won. The loser re-validates against the
+   * *committed* status and throws a normal BadRequestException instead of silently emitting
+   * an event for a state that was never persisted.
+   *
+   * onDispatched runs right after the lifecycle emit and before refreshLifecycle/session-closed,
+   * so callers that need to emit a follow-up event (e.g. order:paid) can guarantee it reaches
+   * clients before a session-closed event for the same action.
+   */
   private async transitionOrder(
     order: Order,
     next: OrderStatus,
     actor: ActorInfo = SYSTEM_ACTOR,
+    onDispatched?: (order: Order) => void,
   ): Promise<Order> {
     const transitionActor = this.resolveTransitionActor(actor);
-    // transition() validates, sets status, and stamps milestone timestamps
-    this.orderTransitionService.transition(order, next, transitionActor);
-    const updatedOrder = await this.orderRepository.save(order);
-    this.dispatchOrderEvent(updatedOrder, next);
 
-    if (updatedOrder.tableSessionId) {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    let updatedOrder: Order;
+    try {
+      // Postgres cannot apply FOR UPDATE to rows coming from the nullable side of a LEFT
+      // JOIN (table/waiter/tableSession are all optional), so the lock must be acquired
+      // against the bare "orders" row first, then the full relation graph loaded separately
+      // within the same locked transaction.
+      const lockedId = await queryRunner.manager
+        .createQueryBuilder(Order, 'order')
+        .setLock('pessimistic_write')
+        .where('order.id = :id', { id: order.id })
+        .getOne();
+      if (!lockedId) throw new NotFoundException(`Order with ID ${order.id} not found`);
+
+      const locked = await queryRunner.manager
+        .createQueryBuilder(Order, 'order')
+        .leftJoinAndSelect('order.items', 'items')
+        .leftJoinAndSelect('items.product', 'product')
+        .leftJoinAndSelect('product.kitchenStation', 'kitchenStation')
+        .leftJoinAndSelect('order.table', 'table')
+        .leftJoinAndSelect('order.waiter', 'waiter')
+        .leftJoinAndSelect('order.tableSession', 'tableSession')
+        .where('order.id = :id', { id: order.id })
+        .getOne();
+      if (!locked) throw new NotFoundException(`Order with ID ${order.id} not found`);
+
+      // transition() validates and mutates against the row's current committed status,
+      // not the caller's possibly-stale in-memory copy.
+      this.orderTransitionService.transition(locked, next, transitionActor);
+      updatedOrder = await queryRunner.manager.save(locked);
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+
+    this.dispatchOrderEvent(updatedOrder, next);
+    onDispatched?.(updatedOrder);
+
+    // A transition landing on an OPEN_ORDER_STATUSES status can never leave zero open orders
+    // on the session (this order itself still counts as open) — skip the count query on the
+    // hot path (CONFIRMED/IN_KITCHEN/READY/DELIVERED) and only check on exit transitions.
+    if (updatedOrder.tableSessionId && !OPEN_ORDER_STATUSES.includes(next)) {
       await this.tableSessionsService.refreshLifecycle(updatedOrder.tableSessionId);
     }
 
@@ -820,10 +893,11 @@ export class OrdersService {
     order.paymentStatus = OrderPaymentStatus.PAID;
     await this.orderRepository.save(order);
 
-    const closed = await this.transitionOrder(order, OrderStatus.CLOSED);
-    this.kitchenGateway.emitOrderPaid(closed, payment.id);
-
-    return closed;
+    // order:paid must reach clients before any session-closed emitted by refreshLifecycle
+    // as a side effect of this same transition (see transitionOrder's onDispatched).
+    return this.transitionOrder(order, OrderStatus.CLOSED, SYSTEM_ACTOR, (closed) =>
+      this.kitchenGateway.emitOrderPaid(closed, payment.id),
+    );
   }
 
   private resolveTransitionActor(actor: ActorInfo): TransitionActor {

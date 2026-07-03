@@ -16,7 +16,9 @@ import { StaffRole } from '@common/enums/staff-role.enum';
 import { AuthPayload } from '@modules/auth/types/auth-payload.type';
 import { KitchenGateway } from '@modules/kitchen/kitchen.gateway';
 
-const OPEN_ORDER_STATUSES = [
+// Exported so callers (e.g. OrdersService) can tell upfront whether a transition could
+// possibly leave zero open orders on a session, without duplicating this list.
+export const OPEN_ORDER_STATUSES = [
   OrderStatus.CREATED,
   OrderStatus.CONFIRMED,
   OrderStatus.IN_KITCHEN,

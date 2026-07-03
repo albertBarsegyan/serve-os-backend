@@ -32,6 +32,7 @@ describe('KitchenGateway.handleJoinSession', () => {
       {} as never,
       tableSessionRepo as never,
       mockRepo() as never,
+      mockRepo() as never,
     );
   });
 
@@ -179,6 +180,7 @@ describe('KitchenGateway.handleCallWaiter', () => {
       {} as never,
       tableSessionRepo as never,
       mockRepo() as never,
+      mockRepo() as never,
     );
     gateway.server = server as never;
   });
@@ -234,6 +236,7 @@ describe('KitchenGateway payment-failed / refunded emits', () => {
     gateway = new KitchenGateway(
       mockLogger(),
       {} as never,
+      mockRepo() as never,
       mockRepo() as never,
       mockRepo() as never,
     );
@@ -309,5 +312,90 @@ describe('KitchenGateway payment-failed / refunded emits', () => {
         expect.objectContaining({ orderId: 'order-1', paymentId: 'payment-1', amount: 42 }),
       );
     }
+  });
+});
+
+describe('KitchenGateway.handleJoinBusiness — staff liveness + token expiry', () => {
+  let gateway: KitchenGateway;
+  let jwtService: { verifyAsync: jest.Mock };
+  let businessRepo: ReturnType<typeof mockRepo>;
+  let staffRepo: ReturnType<typeof mockRepo>;
+  let client: {
+    id: string;
+    handshake: { headers: { cookie?: string } };
+    join: jest.Mock;
+    disconnect: jest.Mock;
+  };
+
+  const STAFF_PAYLOAD = {
+    type: 'staff' as const,
+    staffId: 'staff-1',
+    businessId: 'biz-1',
+    role: 'WAITER',
+  };
+
+  beforeEach(() => {
+    jwtService = { verifyAsync: jest.fn() };
+    businessRepo = mockRepo();
+    staffRepo = mockRepo();
+    client = {
+      id: 'socket-1',
+      handshake: { headers: { cookie: 'access_token=valid-token' } },
+      join: jest.fn().mockResolvedValue(undefined),
+      disconnect: jest.fn(),
+    };
+
+    gateway = new KitchenGateway(
+      mockLogger(),
+      jwtService as never,
+      mockRepo() as never, // tableSessionRepository
+      businessRepo as never,
+      staffRepo as never,
+    );
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('rejects join-business for a staff JWT whose businessId matches but whose account is deactivated', async () => {
+    const exp = Math.floor(Date.now() / 1000) + 900;
+    jwtService.verifyAsync.mockResolvedValue({ ...STAFF_PAYLOAD, exp });
+    // isActive: false / soft-deleted staff never comes back from this query.
+    staffRepo.findOne.mockResolvedValue(null);
+
+    const result = await gateway.handleJoinBusiness(client as never, 'biz-1');
+
+    expect(result).toEqual({ event: 'error', data: 'Unauthorized' });
+    expect(client.join).not.toHaveBeenCalled();
+  });
+
+  it('accepts join-business for an active staff account and disconnects once the token expires', async () => {
+    jest.useFakeTimers();
+    const exp = Math.floor(Date.now() / 1000) + 1;
+    jwtService.verifyAsync.mockResolvedValue({ ...STAFF_PAYLOAD, exp });
+    staffRepo.findOne.mockResolvedValue({ id: 'staff-1', businessId: 'biz-1', isActive: true });
+
+    const result = await gateway.handleJoinBusiness(client as never, 'biz-1');
+
+    expect(result).toEqual({ event: 'joined', data: 'biz-1' });
+    expect(client.join).toHaveBeenCalledWith('business:biz-1');
+    expect(client.disconnect).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1100);
+    expect(client.disconnect).toHaveBeenCalledWith(true);
+  });
+
+  it('clears the pending expiry timer on disconnect so it never fires afterwards', async () => {
+    jest.useFakeTimers();
+    const exp = Math.floor(Date.now() / 1000) + 1;
+    jwtService.verifyAsync.mockResolvedValue({ ...STAFF_PAYLOAD, exp });
+    staffRepo.findOne.mockResolvedValue({ id: 'staff-1', businessId: 'biz-1', isActive: true });
+
+    await gateway.handleJoinBusiness(client as never, 'biz-1');
+    gateway.handleDisconnect(client as never);
+    jest.advanceTimersByTime(1100);
+
+    expect(client.disconnect).not.toHaveBeenCalled();
   });
 });
