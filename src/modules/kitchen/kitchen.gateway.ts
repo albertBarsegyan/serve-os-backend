@@ -15,9 +15,16 @@ import { JwtService } from '@nestjs/jwt';
 import { Order } from '@modules/orders/entities/order.entity';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
 import { Business } from '@modules/business/entities/business.entity';
+import { Staff } from '@modules/staff/entities/staff.entity';
 import { OrderStatus } from '@modules/orders/entities/order-status.enum';
 import { CustomerOrderStatus, toCustomerStatus } from '@modules/orders/customer-order-status';
 import type { AuthPayload } from '@modules/auth/types/auth-payload.type';
+
+interface AuthResult {
+  payload: AuthPayload;
+  /** JWT `exp` claim (seconds since epoch) — used to force a re-auth once it passes. */
+  exp: number;
+}
 
 export interface ActorInfo {
   type: 'owner' | 'staff' | 'system';
@@ -97,6 +104,15 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   @WebSocketServer()
   server: Server;
 
+  /**
+   * A socket's handshake cookie is captured once at connect time and never refreshed, so
+   * without this a socket that joined a room while its access token was still valid would
+   * keep receiving that tenant's live feed forever, even long after the token expires,
+   * since nothing about the room membership is time-limited on its own. Keyed by socket id;
+   * cleared on disconnect (handleDisconnect) so it never leaks.
+   */
+  private readonly expiryTimers = new Map<string, NodeJS.Timeout>();
+
   constructor(
     private readonly logger: PinoLogger,
     private readonly jwtService: JwtService,
@@ -104,6 +120,8 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     private readonly tableSessionRepository: Repository<TableSession>,
     @InjectRepository(Business)
     private readonly businessRepository: Repository<Business>,
+    @InjectRepository(Staff)
+    private readonly staffRepository: Repository<Staff>,
   ) {}
 
   handleConnection(client: Socket) {
@@ -112,31 +130,60 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
 
   handleDisconnect(client: Socket) {
     this.logger.info({ clientId: client.id }, 'Kitchen client disconnected');
+    const timer = this.expiryTimers.get(client.id);
+    if (timer) {
+      clearTimeout(timer);
+      this.expiryTimers.delete(client.id);
+    }
   }
 
   @SubscribeMessage('join-kitchen')
   async handleJoinKitchen(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
-    const payload = await this.authenticate(client);
-    if (!payload || !(await this.canAccessBusiness(payload, businessId))) {
+    const auth = await this.authenticate(client);
+    if (!auth || !(await this.canAccessBusiness(auth.payload, businessId))) {
       this.logger.warn({ clientId: client.id, businessId }, 'Rejected unauthorized join-kitchen');
       return { event: 'error', data: 'Unauthorized' };
     }
 
     await client.join(`kitchen:${businessId}`);
+    this.scheduleExpiryDisconnect(client, auth.exp);
     this.logger.debug({ clientId: client.id, businessId }, 'Kitchen client joined room');
     return { event: 'joined', data: businessId };
   }
 
   @SubscribeMessage('join-business')
   async handleJoinBusiness(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
-    const payload = await this.authenticate(client);
-    if (!payload || !(await this.canAccessBusiness(payload, businessId))) {
+    const auth = await this.authenticate(client);
+    if (!auth || !(await this.canAccessBusiness(auth.payload, businessId))) {
       this.logger.warn({ clientId: client.id, businessId }, 'Rejected unauthorized join-business');
       return { event: 'error', data: 'Unauthorized' };
     }
 
     await client.join(`business:${businessId}`);
+    this.scheduleExpiryDisconnect(client, auth.exp);
     return { event: 'joined', data: businessId };
+  }
+
+  /**
+   * Leaving is always safe to allow unconditionally (no auth check needed) — a socket can
+   * only ever remove itself from a room it's already in. Without this, a socket that joins
+   * kitchen/business for one tenant and later joins another (e.g. an owner switching their
+   * active business) keeps receiving the first tenant's live order/payment feed indefinitely,
+   * since it's never explicitly removed until the whole connection drops.
+   */
+  @SubscribeMessage('leave-kitchen')
+  async handleLeaveKitchen(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
+    await client.leave(`kitchen:${businessId}`);
+  }
+
+  @SubscribeMessage('leave-business')
+  async handleLeaveBusiness(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
+    await client.leave(`business:${businessId}`);
+  }
+
+  @SubscribeMessage('leave-session')
+  async handleLeaveSession(@ConnectedSocket() client: Socket, @MessageBody() sessionToken: string) {
+    await client.leave(`session:${sessionToken}`);
   }
 
   /**
@@ -366,7 +413,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * withCredentials) and must actually belong to the businessId it asks to join —
    * otherwise any socket could snoop on another tenant's POS stream by guessing its id.
    */
-  private async authenticate(client: Socket): Promise<AuthPayload | null> {
+  private async authenticate(client: Socket): Promise<AuthResult | null> {
     const cookieHeader = client.handshake.headers.cookie;
     if (!cookieHeader) return null;
 
@@ -379,10 +426,40 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     if (!token) return null;
 
     try {
-      return await this.jwtService.verifyAsync<AuthPayload>(decodeURIComponent(token));
+      // verifyAsync returns the standard JWT claims (exp/iat) alongside AuthPayload's fields.
+      const decoded = await this.jwtService.verifyAsync<AuthPayload & { exp: number }>(
+        decodeURIComponent(token),
+      );
+      return { payload: decoded, exp: decoded.exp };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The socket's handshake cookie is fixed at connect time and never re-read, so once this
+   * exact token expires it can never pass authenticate() again on this connection. Forcing a
+   * disconnect at that point (rather than leaving the room quietly subscribed forever) makes
+   * the client reconnect — which re-sends whatever cookie the browser holds *now* (hopefully
+   * refreshed via the normal HTTP refresh-token flow by then) and its existing 'connect'
+   * handler already rejoins rooms and resyncs state, so this is a low-disruption recovery path.
+   */
+  private scheduleExpiryDisconnect(client: Socket, exp: number): void {
+    const existing = this.expiryTimers.get(client.id);
+    if (existing) clearTimeout(existing);
+
+    const msUntilExpiry = exp * 1000 - Date.now();
+    if (msUntilExpiry <= 0) return;
+
+    const timer = setTimeout(() => {
+      this.logger.info(
+        { clientId: client.id },
+        'Access token expired — disconnecting socket to force re-auth on reconnect',
+      );
+      client.disconnect(true);
+    }, msUntilExpiry);
+
+    this.expiryTimers.set(client.id, timer);
   }
 
   // ── Legacy broadcast helpers (kept for backward compat / join-session sync) ─
@@ -396,7 +473,13 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
 
     if (payload.type === 'staff') {
-      return payload.businessId === businessId;
+      if (payload.businessId !== businessId) return false;
+      // Unlike the JWT claim alone, this catches a staff account deactivated or removed
+      // after the token was issued — @DeleteDateColumn already excludes soft-deleted rows.
+      const staff = await this.staffRepository.findOne({
+        where: { id: payload.staffId, businessId, isActive: true },
+      });
+      return !!staff;
     }
 
     return false;

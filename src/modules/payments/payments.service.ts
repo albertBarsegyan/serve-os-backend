@@ -178,6 +178,10 @@ export class PaymentsService {
   }
 
   private confirmOnlinePayment(paymentId: string, businessId: string) {
-    void this.confirmPayment(paymentId, businessId, null);
+    // Fire-and-forget from create() — must not silently swallow failures, or an order
+    // never advances/emits with nothing in the logs to explain why.
+    this.confirmPayment(paymentId, businessId, null).catch((err: unknown) =>
+      console.error('Failed to auto-confirm online payment', paymentId, err),
+    );
   }
 }
