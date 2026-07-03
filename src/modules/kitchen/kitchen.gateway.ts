@@ -43,16 +43,33 @@ export interface CallWaiterPayload {
   at: string;
 }
 
+export interface PaymentFailedPayload extends OrderEventPayload {
+  reason: string;
+}
+
+export interface OrderRefundedPayload extends OrderEventPayload {
+  refundId: string;
+}
+
 // Kept for the join-session reconnect-sync path only.
 export interface OrderStatusChangedPayload {
   orderId: string;
   status: string;
+  customerStatus: CustomerOrderStatus;
+  // DELIVERED and CLOSED both map to customerStatus 'served' — paymentStatus lets the
+  // customer app tell "served, awaiting payment" and "paid, all done" apart on resync,
+  // where live per-transition events (order:payment-open / order:paid) aren't available.
+  paymentStatus: string;
   previousStatus: string | null;
   tableId: string | null;
   tableName: string | null;
   sessionToken: string | null;
   updatedAt: string;
   actor: ActorInfo;
+}
+
+export interface SessionClosedPayload {
+  sessionId: string;
 }
 
 export interface OrderPendingConfirmationPayload {
@@ -66,13 +83,6 @@ export interface OrderPendingConfirmationPayload {
     unitPrice: number;
   }>;
 }
-
-const TERMINAL_STATUSES: OrderStatus[] = [
-  OrderStatus.CLOSED,
-  OrderStatus.CANCELLED,
-  OrderStatus.REFUNDED,
-  OrderStatus.PAYMENT_FAILED,
-];
 
 @WebSocketGateway({
   cors: {
@@ -104,46 +114,6 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.logger.info({ clientId: client.id }, 'Kitchen client disconnected');
   }
 
-  /**
-   * join-kitchen / join-business grant a live feed of a business's orders and payments,
-   * so the caller must be authenticated (owner/staff access_token cookie forwarded via
-   * withCredentials) and must actually belong to the businessId it asks to join —
-   * otherwise any socket could snoop on another tenant's POS stream by guessing its id.
-   */
-  private async authenticate(client: Socket): Promise<AuthPayload | null> {
-    const cookieHeader = client.handshake.headers.cookie;
-    if (!cookieHeader) return null;
-
-    const token = cookieHeader
-      .split(';')
-      .map((part) => part.trim())
-      .find((part) => part.startsWith('access_token='))
-      ?.slice('access_token='.length);
-
-    if (!token) return null;
-
-    try {
-      return await this.jwtService.verifyAsync<AuthPayload>(decodeURIComponent(token));
-    } catch {
-      return null;
-    }
-  }
-
-  private async canAccessBusiness(payload: AuthPayload, businessId: string): Promise<boolean> {
-    if (payload.type === 'owner') {
-      const business = await this.businessRepository.findOne({
-        where: { id: businessId, ownerId: payload.userId },
-      });
-      return !!business;
-    }
-
-    if (payload.type === 'staff') {
-      return payload.businessId === businessId;
-    }
-
-    return false;
-  }
-
   @SubscribeMessage('join-kitchen')
   async handleJoinKitchen(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
     const payload = await this.authenticate(client);
@@ -169,25 +139,47 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     return { event: 'joined', data: businessId };
   }
 
+  /**
+   * A session token is the guest's only credential — it must map to a currently
+   * active table session, otherwise a stale/closed/guessed token could still be
+   * used to listen in on a table's live order feed.
+   */
   @SubscribeMessage('join-session')
   async handleJoinSession(@ConnectedSocket() client: Socket, @MessageBody() sessionToken: string) {
-    await client.join(`session:${sessionToken}`);
-
-    // Emit the current active order status so the customer view syncs on connect/reconnect.
-    // Uses order:status-changed (legacy) so the customer page can treat this as initial state
-    // rather than a transition event.
     const session = await this.tableSessionRepository.findOne({
-      where: { sessionToken },
+      where: { sessionToken, isActive: true },
       relations: ['orders', 'orders.table'],
     });
-    const activeOrder = session?.orders?.find((o) => !TERMINAL_STATUSES.includes(o.status));
+
+    if (!session) {
+      this.logger.warn({ clientId: client.id }, 'Rejected join-session for invalid/expired token');
+      return { event: 'error', data: 'Unauthorized' };
+    }
+
+    await client.join(`session:${sessionToken}`);
+
+    // Emit the current order status so the customer view syncs on connect/reconnect.
+    // Uses order:status-changed (legacy) so the customer page can treat this as initial state
+    // rather than a transition event. Picks the most recently updated order regardless of
+    // status — including terminal ones (CLOSED/CANCELLED/REFUNDED/PAYMENT_FAILED) — so a
+    // customer reloading right after payment, cancellation, or a refund still resyncs to the
+    // correct screen instead of getting no payload at all. The frontend already guards on
+    // orderId matching the order it's tracking, so this is safe even with multiple orders.
+    const [activeOrder] = [...(session.orders ?? [])].sort(
+      (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+    );
     if (activeOrder) {
       const syncPayload: OrderStatusChangedPayload = {
         orderId: activeOrder.id,
         status: activeOrder.status,
+        customerStatus: toCustomerStatus(activeOrder.status),
+        paymentStatus: activeOrder.paymentStatus,
         previousStatus: null,
         tableId: activeOrder.tableId,
-        tableName: activeOrder?.table?.number !== null ? String(activeOrder?.table?.number) : null,
+        tableName:
+          activeOrder?.table?.number !== null && activeOrder?.table?.number !== undefined
+            ? String(activeOrder?.table?.number)
+            : null,
         sessionToken,
         updatedAt: activeOrder.updatedAt.toISOString(),
         actor: { type: 'system', id: 'system' },
@@ -201,7 +193,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   @SubscribeMessage('call-waiter')
   async handleCallWaiter(@MessageBody() body: { sessionToken: string }): Promise<void> {
     const session = await this.tableSessionRepository.findOne({
-      where: { sessionToken: body.sessionToken },
+      where: { sessionToken: body.sessionToken, isActive: true },
     });
     if (!session) return;
 
@@ -215,9 +207,6 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.server.to(`business:${session.businessId}`).emit('order:call-waiter', payload);
     this.logger.debug({ sessionToken: body.sessionToken }, 'Call-waiter broadcast');
   }
-
-  // ── Typed emit helpers ───────────────────────────────────────────────────────
-  // Each emits to exactly the rooms listed in the order-flow spec.
 
   /** CREATED → business room (waiter gets an audible new-order alert). */
   emitOrderCreated(order: Order): void {
@@ -236,6 +225,9 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.server.to(`kitchen:${order.businessId}`).emit('order:confirmed', payload);
     this.logger.debug({ orderId: order.id }, 'order:confirmed emitted');
   }
+
+  // ── Typed emit helpers ───────────────────────────────────────────────────────
+  // Each emits to exactly the rooms listed in the order-flow spec.
 
   /** IN_KITCHEN → session (customer alert) + business (waiter progress). */
   emitOrderPreparing(order: Order): void {
@@ -259,9 +251,13 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.logger.debug({ orderId: order.id }, 'order:ready emitted');
   }
 
-  /** DELIVERED → business room only (cashier payment queue opens in Part 3). */
+  /** DELIVERED → session (customer sees "served") + business (cashier payment queue opens). */
   emitOrderServed(order: Order): void {
     const payload = this.buildPayload(order, true);
+    const token = order.tableSession?.sessionToken;
+    if (token) {
+      this.server.to(`session:${token}`).emit('order:served', payload);
+    }
     this.server.to(`business:${order.businessId}`).emit('order:served', payload);
     this.logger.debug({ orderId: order.id }, 'order:served emitted');
   }
@@ -278,16 +274,21 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.logger.debug({ orderId: order.id }, 'order:cancelled emitted');
   }
 
-  /** DELIVERED → business room: cashier payment queue opens. */
+  /** DELIVERED → session (customer sees payment due) + business (cashier payment queue opens). */
   emitPaymentOpen(order: Order, paymentId: string, amount: number): void {
-    this.server.to(`business:${order.businessId}`).emit('order:payment-open', {
+    const payload = {
       orderId: order.id,
       businessId: order.businessId,
       tableId: order.tableId,
       amount,
       paymentId,
       at: new Date().toISOString(),
-    });
+    };
+    const token = order.tableSession?.sessionToken;
+    if (token) {
+      this.server.to(`session:${token}`).emit('order:payment-open', payload);
+    }
+    this.server.to(`business:${order.businessId}`).emit('order:payment-open', payload);
     this.logger.debug({ orderId: order.id, paymentId }, 'order:payment-open emitted');
   }
 
@@ -308,7 +309,39 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.logger.debug({ orderId: order.id, paymentId }, 'order:paid emitted');
   }
 
-  // ── Legacy broadcast helpers (kept for backward compat / join-session sync) ─
+  /** PAYMENT_FAILED → session (customer alert) + business (cashier needs to retry/cancel). */
+  emitPaymentFailed(order: Order, reason: string): void {
+    const payload: PaymentFailedPayload = { ...this.buildPayload(order, true), reason };
+    const token = order.tableSession?.sessionToken;
+    if (token) {
+      this.server.to(`session:${token}`).emit('order:payment-failed', payload);
+    }
+    this.server.to(`business:${order.businessId}`).emit('order:payment-failed', payload);
+    this.logger.debug({ orderId: order.id, reason }, 'order:payment-failed emitted');
+  }
+
+  /** REFUNDED → session + business + kitchen (a paid-then-refunded order reopened). */
+  emitOrderRefunded(order: Order, refundId: string): void {
+    const payload: OrderRefundedPayload = { ...this.buildPayload(order, false), refundId };
+    const token = order.tableSession?.sessionToken;
+    if (token) {
+      this.server.to(`session:${token}`).emit('order:refunded', payload);
+    }
+    this.server.to(`business:${order.businessId}`).emit('order:refunded', payload);
+    this.server.to(`kitchen:${order.businessId}`).emit('order:refunded', payload);
+    this.logger.debug({ orderId: order.id, refundId }, 'order:refunded emitted');
+  }
+
+  /**
+   * A table session ends (all orders settled/paid, or a staff-initiated close) → session
+   * room only, so the guest's browser can clear its stored session token/credentials and
+   * stop treating itself as seated at the table.
+   */
+  emitSessionClosed(sessionToken: string, sessionId: string): void {
+    const payload: SessionClosedPayload = { sessionId };
+    this.server.to(`session:${sessionToken}`).emit('session-closed', payload);
+    this.logger.debug({ sessionId, sessionToken }, 'session-closed emitted');
+  }
 
   broadcastPendingConfirmation(order: Order): void {
     const payload: OrderPendingConfirmationPayload = {
@@ -327,30 +360,46 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.logger.debug({ orderId: order.id }, 'Order pending confirmation broadcast');
   }
 
-  broadcastOrderUpdate(order: Order, previousStatus: OrderStatus | null, actor: ActorInfo): void {
-    const payload: OrderStatusChangedPayload = {
-      orderId: order.id,
-      status: order.status,
-      previousStatus,
-      tableId: order.tableId,
-      tableName: order.table?.number !== null ? String(order?.table?.number) : null,
-      sessionToken: order.tableSession?.sessionToken ?? null,
-      updatedAt: new Date().toISOString(),
-      actor,
-    };
+  /**
+   * join-kitchen / join-business grant a live feed of a business's orders and payments,
+   * so the caller must be authenticated (owner/staff access_token cookie forwarded via
+   * withCredentials) and must actually belong to the businessId it asks to join —
+   * otherwise any socket could snoop on another tenant's POS stream by guessing its id.
+   */
+  private async authenticate(client: Socket): Promise<AuthPayload | null> {
+    const cookieHeader = client.handshake.headers.cookie;
+    if (!cookieHeader) return null;
 
-    this.server.to(`kitchen:${order.businessId}`).emit('order:status-changed', payload);
-    this.server.to(`business:${order.businessId}`).emit('order:status-changed', payload);
-    if (order.tableSession?.sessionToken) {
-      this.server
-        .to(`session:${order.tableSession.sessionToken}`)
-        .emit('order:status-changed', payload);
+    const token = cookieHeader
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith('access_token='))
+      ?.slice('access_token='.length);
+
+    if (!token) return null;
+
+    try {
+      return await this.jwtService.verifyAsync<AuthPayload>(decodeURIComponent(token));
+    } catch {
+      return null;
+    }
+  }
+
+  // ── Legacy broadcast helpers (kept for backward compat / join-session sync) ─
+
+  private async canAccessBusiness(payload: AuthPayload, businessId: string): Promise<boolean> {
+    if (payload.type === 'owner') {
+      const business = await this.businessRepository.findOne({
+        where: { id: businessId, ownerId: payload.userId },
+      });
+      return !!business;
     }
 
-    this.logger.debug(
-      { orderId: order.id, status: order.status, previousStatus },
-      'Order status broadcast',
-    );
+    if (payload.type === 'staff') {
+      return payload.businessId === businessId;
+    }
+
+    return false;
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────

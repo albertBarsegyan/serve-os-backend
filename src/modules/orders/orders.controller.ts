@@ -31,6 +31,7 @@ import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
 import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
 import { ProcessPaymentDto } from './dto/process-payment.dto';
+import { RefundOrderDto } from './dto/refund-order.dto';
 import { RecordStaffPaymentDto } from '@modules/payments/dto/record-staff-payment.dto';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import type { ActorInfo } from '@modules/kitchen/kitchen.gateway';
@@ -226,5 +227,28 @@ export class OrdersController {
     @Body() dto: ProcessPaymentDto,
   ) {
     return this.ordersService.processPosPayment(businessId, id, dto);
+  }
+
+  /**
+   * Refunds a closed (paid) order. No payment-provider refund integration exists yet,
+   * so this only records the order-level refund and broadcasts it.
+   */
+  @RequireBusinessFeature(
+    [BusinessFeature.ORDER_DINE_IN, BusinessFeature.ORDER_TAKEAWAY, BusinessFeature.ORDER_DELIVERY],
+    'any',
+  )
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.CASHIER)
+  @Post(':id/refund')
+  @ApiOperation({
+    summary: 'Refund a closed order (OWNER/MANAGER/CASHIER — matches PAYMENT_REFUND)',
+  })
+  @ApiResponse({ status: 200, description: 'Order refunded' })
+  @ApiResponse({ status: 400, description: 'Order is not CLOSED' })
+  refundOrder(
+    @Tenant(true) businessId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RefundOrderDto,
+  ) {
+    return this.ordersService.refundOrder(businessId, id, dto);
   }
 }

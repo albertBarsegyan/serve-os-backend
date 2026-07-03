@@ -93,6 +93,7 @@ export class PaymentsService {
         where: businessId
           ? { id: confirmedPayment.orderId, businessId }
           : { id: confirmedPayment.orderId },
+        relations: ['tableSession'],
       });
       if (order) {
         await this.ordersService.recomputeAndAdvance(order);
@@ -100,6 +101,61 @@ export class PaymentsService {
     }
 
     return confirmedPayment!;
+  }
+
+  /**
+   * Marks a payment as FAILED and, unless it was already terminal (idempotency guard
+   * for duplicate webhook/poll signals), advances the order to PAYMENT_FAILED.
+   */
+  async failPayment(
+    paymentId: string,
+    businessId: string | null,
+    reason: string,
+  ): Promise<Payment> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    let failedPayment: Payment;
+    let alreadyTerminal = false;
+
+    try {
+      const payment = await queryRunner.manager.findOne(Payment, {
+        where: businessId ? { id: paymentId, businessId } : { id: paymentId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!payment) throw new NotFoundException(`Payment ${paymentId} not found`);
+
+      if (payment.status !== PaymentStatus.PENDING) {
+        alreadyTerminal = true;
+        failedPayment = payment;
+        await queryRunner.commitTransaction();
+      } else {
+        payment.status = PaymentStatus.FAILED;
+        failedPayment = await queryRunner.manager.save(payment);
+        await queryRunner.commitTransaction();
+      }
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+
+    if (!alreadyTerminal) {
+      const order = await this.orderRepository.findOne({
+        where: businessId
+          ? { id: failedPayment.orderId, businessId }
+          : { id: failedPayment.orderId },
+        relations: ['tableSession'],
+      });
+      if (order) {
+        await this.ordersService.markPaymentFailed(order, reason);
+      }
+    }
+
+    return failedPayment!;
   }
 
   async findByProviderRef(providerRef: string): Promise<Payment | null> {

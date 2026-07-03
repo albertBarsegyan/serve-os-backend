@@ -9,9 +9,10 @@ import { Business } from '@modules/business/entities/business.entity';
 import { Order } from '@modules/orders/entities/order.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
 import { TenantAccessService } from '@common/guards/tenant-access.service';
+import { KitchenModule } from '@modules/kitchen/kitchen.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([TableSession, Table, Business, Order, Staff])],
+  imports: [TypeOrmModule.forFeature([TableSession, Table, Business, Order, Staff]), KitchenModule],
   controllers: [TableSessionsController],
   providers: [TableSessionsService, GuestSessionGuard, TenantAccessService],
   exports: [TableSessionsService, GuestSessionGuard],
