@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
 import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { ConfirmOrderPaymentDto, UpdateOrderStatusDto } from './dto/orders.dto';
@@ -25,6 +26,7 @@ import { Business } from '@modules/business/entities/business.entity';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
 import { OrderTransitionService, TransitionActor } from './order-transition.service';
 import { ProcessPaymentDto } from './dto/process-payment.dto';
+import { RefundOrderDto } from './dto/refund-order.dto';
 import { Payment } from '@modules/payments/entities/payment.entity';
 import {
   CaptureTiming,
@@ -153,12 +155,6 @@ export class OrdersService {
 
       this.kitchenGateway.emitOrderCreated(createdOrder);
 
-      // if (business.features?.includes(BusinessFeature.QR_ORDERING)) {
-      //   createdOrder = await this.transitionOrder(createdOrder, OrderStatus.CONFIRMED);
-      //   createdOrder = await this.transitionOrder(createdOrder, OrderStatus.IN_KITCHEN);
-      // }
-
-      // Bump session expiry so active customers aren't kicked out mid-meal
       void this.tableSessionsService.bumpExpiresAt(tableSession.id).catch(() => undefined);
 
       return createdOrder;
@@ -182,6 +178,7 @@ export class OrdersService {
       where: { id: session.businessId },
       relations: ['paymentMethods'],
     });
+
     if (!business) throw new NotFoundException('Business not found');
 
     const pmRecord = (business.paymentMethods ?? []).find(
@@ -510,6 +507,14 @@ export class OrdersService {
       (saved.type === OrderType.TAKEAWAY && saved.status === OrderStatus.READY)
     ) {
       saved = await this.transitionOrder(saved, OrderStatus.CLOSED);
+      // transitionOrder/dispatchOrderEvent has no CLOSED case (that status is normally
+      // reached via closeWithPayment, which emits explicitly) — emit here too so an
+      // online payment auto-closing the order isn't a silent, unbroadcast transition.
+      const latestPayment = await this.paymentRepository.findOne({
+        where: { orderId: saved.id, status: PaymentStatus.CONFIRMED },
+        order: { confirmedAt: 'DESC' },
+      });
+      this.kitchenGateway.emitOrderPaid(saved, latestPayment?.id ?? '');
     }
 
     return saved;
@@ -607,24 +612,6 @@ export class OrdersService {
     return this.processStaffPayment(businessId, orderId, PaymentMethod.POS, dto);
   }
 
-  async processPaymentWebhook(
-    orderId: string,
-    businessId: string,
-    event: 'success' | 'failure' | 'refund',
-  ): Promise<Order> {
-    const order = await this.findOne(businessId, orderId);
-
-    if (event === 'success') {
-      return this.transitionOrder(order, OrderStatus.CLOSED);
-    }
-
-    if (event === 'failure') {
-      return this.transitionOrder(order, OrderStatus.PAYMENT_FAILED);
-    }
-
-    return this.transitionOrder(order, OrderStatus.REFUNDED);
-  }
-
   /**
    * POST /orders/:id/payment/confirm — cashier confirms the pending payment
    * that was auto-created when the order was served (READY → DELIVERED).
@@ -657,6 +644,40 @@ export class OrdersService {
     return this.closeWithPayment(order, payment, staffId);
   }
 
+  /**
+   * Marks an order's payment as failed (called from payment reconciliation / provider
+   * webhook, never directly by staff — see ROLE_TRANSITIONS on OrderTransitionService).
+   */
+  async markPaymentFailed(order: Order, reason: string): Promise<Order> {
+    order.paymentStatus = OrderPaymentStatus.FAILED;
+    await this.orderRepository.save(order);
+
+    const failed = await this.transitionOrder(order, OrderStatus.PAYMENT_FAILED);
+    this.kitchenGateway.emitPaymentFailed(failed, reason);
+
+    return failed;
+  }
+
+  /**
+   * Staff-initiated refund of a already-closed (paid) order. There is no payment-provider
+   * refund integration yet, so refundId is a caller-supplied external reference.
+   */
+  async refundOrder(businessId: string, orderId: string, dto: RefundOrderDto): Promise<Order> {
+    const order = await this.findOne(businessId, orderId);
+    if (order.status !== OrderStatus.CLOSED) {
+      throw new BadRequestException(`Order must be CLOSED to refund (current: ${order.status})`);
+    }
+
+    order.paymentStatus = OrderPaymentStatus.REFUNDED;
+    await this.orderRepository.save(order);
+
+    const refunded = await this.transitionOrder(order, OrderStatus.REFUNDED);
+    const refundId = dto.refundId ?? randomUUID();
+    this.kitchenGateway.emitOrderRefunded(refunded, refundId);
+
+    return refunded;
+  }
+
   private async processStaffPayment(
     businessId: string,
     orderId: string,
@@ -684,7 +705,7 @@ export class OrdersService {
     // Previously the code checked BusinessFeature.CASH_PAYMENT / POS_PAYMENT which do not exist
     // on the enum. To avoid referencing missing enum members we skip those checks here.
 
-    await this.paymentRepository.save(
+    const payment = await this.paymentRepository.save(
       this.paymentRepository.create({
         businessId,
         orderId: order.id,
@@ -697,8 +718,15 @@ export class OrdersService {
     );
 
     order.tipAmount = Number(dto.tipAmount ?? 0);
+    order.paymentStatus = OrderPaymentStatus.PAID;
 
-    return this.transitionOrder(order, OrderStatus.CLOSED);
+    const closed = await this.transitionOrder(order, OrderStatus.CLOSED);
+    // transitionOrder/dispatchOrderEvent has no CLOSED case (see closeWithPayment /
+    // recomputeAndAdvance) — emit here too so a staff cash/POS payment isn't a silent,
+    // unbroadcast transition that leaves the customer's session stuck on "ready"/"served".
+    this.kitchenGateway.emitOrderPaid(closed, payment.id);
+
+    return closed;
   }
 
   private async transitionOrder(

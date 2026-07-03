@@ -6,7 +6,9 @@ export type CustomerOrderStatus =
   | 'preparing'
   | 'ready'
   | 'served'
-  | 'cancelled';
+  | 'cancelled'
+  | 'payment_failed'
+  | 'refunded';
 
 const MAP: Record<OrderStatus, CustomerOrderStatus> = {
   [OrderStatus.CREATED]: 'placed',
@@ -16,8 +18,8 @@ const MAP: Record<OrderStatus, CustomerOrderStatus> = {
   [OrderStatus.DELIVERED]: 'served',
   [OrderStatus.CLOSED]: 'served',
   [OrderStatus.CANCELLED]: 'cancelled',
-  [OrderStatus.PAYMENT_FAILED]: 'served',
-  [OrderStatus.REFUNDED]: 'cancelled',
+  [OrderStatus.PAYMENT_FAILED]: 'payment_failed',
+  [OrderStatus.REFUNDED]: 'refunded',
 };
 
 export function toCustomerStatus(status: OrderStatus): CustomerOrderStatus {

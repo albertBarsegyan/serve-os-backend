@@ -14,6 +14,7 @@ import { Order } from '@modules/orders/entities/order.entity';
 import { OrderStatus } from '@modules/orders/entities/order-status.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
 import { AuthPayload } from '@modules/auth/types/auth-payload.type';
+import { KitchenGateway } from '@modules/kitchen/kitchen.gateway';
 
 const OPEN_ORDER_STATUSES = [
   OrderStatus.CREATED,
@@ -44,6 +45,7 @@ export class TableSessionsService {
     private readonly businessRepository: Repository<Business>,
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
+    private readonly kitchenGateway: KitchenGateway,
   ) {}
 
   async scan(qrCode: string) {
@@ -247,9 +249,13 @@ export class TableSessionsService {
     session.closedAt = new Date();
     await this.tableSessionRepository.save(session);
     await this.tableRepository.update({ id: session.tableId }, { isReserved: false });
+    this.kitchenGateway.emitSessionClosed(session.sessionToken, session.id);
     return session;
   }
 
+  /** Auto-closes the session once its last order settles (e.g. fully paid) — this is
+   * what tells a customer's browser to clear its stored session credentials after
+   * the "all done" state, without staff having to close the session manually. */
   async refreshLifecycle(sessionId: string): Promise<void> {
     const session = await this.tableSessionRepository.findOne({ where: { id: sessionId } });
     if (!session?.isActive) {
@@ -268,6 +274,7 @@ export class TableSessionsService {
       session.closedAt = new Date();
       await this.tableSessionRepository.save(session);
       await this.tableRepository.update({ id: session.tableId }, { isReserved: false });
+      this.kitchenGateway.emitSessionClosed(session.sessionToken, session.id);
     }
   }
 }

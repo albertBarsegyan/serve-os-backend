@@ -61,7 +61,11 @@ export class PaymentReconcileService implements OnModuleInit, OnModuleDestroy {
           await this.paymentsService.confirmPayment(payment.id, payment.businessId, null);
           this.logger.info({ paymentId: payment.id }, 'Reconcile: confirmed payment');
         } else if (result === 'FAILED') {
-          await this.paymentRepository.update(payment.id, { status: PaymentStatus.FAILED });
+          await this.paymentsService.failPayment(
+            payment.id,
+            payment.businessId,
+            'Provider verification failed during reconciliation',
+          );
           this.logger.warn({ paymentId: payment.id }, 'Reconcile: marked payment FAILED');
         }
       } catch (err: unknown) {

@@ -39,6 +39,18 @@ export class WebhooksController {
     const provider = this.providerRegistry.get(providerSlug);
     const verifyResult = await provider.verify(body.providerRef, {} as never);
 
+    if (verifyResult === 'FAILED') {
+      const payment = await this.paymentsService.findByProviderRef(body.providerRef);
+      if (payment) {
+        await this.paymentsService.failPayment(
+          payment.id,
+          payment.businessId,
+          'Provider callback reported failure',
+        );
+      }
+      return { received: true, status: verifyResult };
+    }
+
     if (verifyResult !== 'PAID') {
       return { received: true, status: verifyResult };
     }

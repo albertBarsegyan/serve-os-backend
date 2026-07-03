@@ -6,6 +6,7 @@ import { TableSession } from './table-session.entity';
 import { Table } from '@modules/tables/entities/table.entity';
 import { Business } from '@modules/business/entities/business.entity';
 import { Order } from '@modules/orders/entities/order.entity';
+import { KitchenGateway } from '@modules/kitchen/kitchen.gateway';
 
 const mockRepo = <T>() => ({
   findOne: jest.fn<Promise<T | null>, [unknown]>(),
@@ -30,6 +31,7 @@ describe('TableSessionsService.resumeByToken', () => {
         { provide: getRepositoryToken(Table), useFactory: mockRepo },
         { provide: getRepositoryToken(Business), useFactory: mockRepo },
         { provide: getRepositoryToken(Order), useFactory: mockRepo },
+        { provide: KitchenGateway, useValue: { emitSessionClosed: jest.fn() } },
       ],
     }).compile();
 
