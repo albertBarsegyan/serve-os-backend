@@ -12,6 +12,7 @@ import { IS_PUBLIC_KEY } from '@common/decorators/public.decorator';
 import { ALLOW_WITHOUT_BUSINESS_KEY } from '@common/decorators/allow-without-business.decorator';
 import { Business } from '@modules/business/entities/business.entity';
 import { AuthPayload } from '@modules/auth/types/auth-payload.type';
+import { maskDisplayTokenInUrl } from '@common/utils/log-redaction.util';
 
 @Injectable()
 export class TenantAccessService {
@@ -122,7 +123,7 @@ export class TenantAccessService {
       {
         principalType: payload.type,
         principalId: payload.type === 'owner' ? payload.userId : payload.staffId,
-        path: request.url,
+        path: maskDisplayTokenInUrl(request.url),
         method: request.method,
       },
       'Tenant guard blocked request without business context',
@@ -147,7 +148,7 @@ export class TenantAccessService {
         principalType: payload.type,
         principalId: payload.type === 'owner' ? payload.userId : payload.staffId,
         businessId,
-        path: request.url,
+        path: maskDisplayTokenInUrl(request.url),
         method: request.method,
       },
       'Tenant guard rejected request for missing business',
@@ -180,7 +181,7 @@ export class TenantAccessService {
               ? payload.staffId
               : payload.userId,
         businessId,
-        path: request.url,
+        path: maskDisplayTokenInUrl(request.url),
         method: request.method,
       },
       'Tenant guard rejected request for unauthorized business access',
