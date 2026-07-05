@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 // ── Modules ───────────────────────────────────────────────────────────────────
 import { AuthModule } from '@modules/auth/auth.module';
 import { BusinessModule } from '@modules/business/business.module';
+import { DisplayModule } from '@modules/display/display.module';
 import { KitchenModule } from '@modules/kitchen/kitchen.module';
 import { MenuModule } from '@modules/menu/menu.module';
 import { ModifiersModule } from '@modules/modifiers/modifiers.module';
@@ -31,11 +32,13 @@ import { TenantMiddleware } from '@common/middleware/tenant.middleware';
 // ── Types ─────────────────────────────────────────────────────────────────────
 import { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import { IncomingMessage, ServerResponse } from 'node:http';
+import { maskDisplayTokenInUrl } from '@common/utils/log-redaction.util';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const FEATURE_MODULES = [
   AuthModule,
   BusinessModule,
+  DisplayModule,
   HealthModule,
   KitchenModule,
   MenuModule,
@@ -97,15 +100,15 @@ function resolveLogContext(req: AuthenticatedRequest): Record<string, unknown> {
             },
             // colorize status codes and method
             customSuccessMessage: (req: IncomingMessage, res: ServerResponse) =>
-              `${req.method} ${req.url} → ${res.statusCode}`,
+              `${req.method} ${maskDisplayTokenInUrl(req.url)} → ${res.statusCode}`,
             customErrorMessage: (req: IncomingMessage, res: ServerResponse, err: Error) =>
-              `${req.method} ${req.url} → ${res.statusCode} (${err.message})`,
+              `${req.method} ${maskDisplayTokenInUrl(req.url)} → ${res.statusCode} (${err.message})`,
             // shape what gets logged
             serializers: {
               req: (req: IncomingMessage) => ({
                 id: req.id,
                 method: req.method,
-                url: req.url,
+                url: maskDisplayTokenInUrl(req.url),
                 rawHeaders: req.rawHeaders,
                 // omit headers noise, add only what's useful
                 ua: req.headers['user-agent'],

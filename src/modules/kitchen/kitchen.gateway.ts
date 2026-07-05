@@ -16,8 +16,15 @@ import { Order } from '@modules/orders/entities/order.entity';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
 import { Business } from '@modules/business/entities/business.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
+import { Display } from '@modules/display/entities/display.entity';
+import { IsNull } from 'typeorm';
 import { OrderStatus } from '@modules/orders/entities/order-status.enum';
 import { CustomerOrderStatus, toCustomerStatus } from '@modules/orders/customer-order-status';
+import { hashDisplayToken } from '@modules/display/utils/display-token.util';
+import {
+  buildDisplayOrderPayload,
+  DisplayOrderPayload,
+} from '@modules/display/utils/display-order.util';
 import type { AuthPayload } from '@modules/auth/types/auth-payload.type';
 
 interface AuthResult {
@@ -79,6 +86,10 @@ export interface SessionClosedPayload {
   sessionId: string;
 }
 
+export interface DisplayOrderRemovedPayload {
+  orderId: string;
+}
+
 export interface OrderPendingConfirmationPayload {
   orderId: string;
   tableId: string | null;
@@ -122,6 +133,8 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     private readonly businessRepository: Repository<Business>,
     @InjectRepository(Staff)
     private readonly staffRepository: Repository<Staff>,
+    @InjectRepository(Display)
+    private readonly displayRepository: Repository<Display>,
   ) {}
 
   handleConnection(client: Socket) {
@@ -184,6 +197,37 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   @SubscribeMessage('leave-session')
   async handleLeaveSession(@ConnectedSocket() client: Socket, @MessageBody() sessionToken: string) {
     await client.leave(`session:${sessionToken}`);
+  }
+
+  @SubscribeMessage('leave-display')
+  async handleLeaveDisplay(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
+    await client.leave(`display:${businessId}`);
+  }
+
+  /**
+   * A display token is a long-lived capability credential for an unattended TV, not a
+   * human login — same trust model as join-session's guest sessionToken. An
+   * invalid/revoked token must not just get an error reply, it must be disconnected,
+   * since there's no human at the keyboard to retry with a fresh one.
+   */
+  @SubscribeMessage('join-display')
+  async handleJoinDisplay(@ConnectedSocket() client: Socket, @MessageBody() token: string) {
+    const display = await this.displayRepository.findOne({
+      where: { tokenHash: hashDisplayToken(token), revokedAt: IsNull() },
+    });
+
+    if (!display) {
+      this.logger.warn({ clientId: client.id }, 'Rejected join-display for invalid/revoked token');
+      client.disconnect(true);
+      return { event: 'error', data: 'Unauthorized' };
+    }
+
+    await client.join(`display:${display.businessId}`);
+    this.logger.debug(
+      { clientId: client.id, businessId: display.businessId },
+      'Display joined room',
+    );
+    return { event: 'joined', data: display.businessId };
   }
 
   /**
@@ -271,6 +315,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
     this.server.to(`kitchen:${order.businessId}`).emit('order:confirmed', payload);
     this.logger.debug({ orderId: order.id }, 'order:confirmed emitted');
+    this.emitDisplayUpdate(order);
   }
 
   // ── Typed emit helpers ───────────────────────────────────────────────────────
@@ -285,6 +330,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
     this.server.to(`business:${order.businessId}`).emit('order:preparing', payload);
     this.logger.debug({ orderId: order.id }, 'order:preparing emitted');
+    this.emitDisplayUpdate(order);
   }
 
   /** READY → session (customer alert) + business (waiter notified). */
@@ -296,6 +342,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
     this.server.to(`business:${order.businessId}`).emit('order:ready', payload);
     this.logger.debug({ orderId: order.id }, 'order:ready emitted');
+    this.emitDisplayUpdate(order);
   }
 
   /** DELIVERED → session (customer sees "served") + business (cashier payment queue opens). */
@@ -307,6 +354,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
     this.server.to(`business:${order.businessId}`).emit('order:served', payload);
     this.logger.debug({ orderId: order.id }, 'order:served emitted');
+    this.emitDisplayRemoved(order);
   }
 
   /** CANCELLED → session + business + kitchen (everyone is notified). */
@@ -319,6 +367,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.server.to(`business:${order.businessId}`).emit('order:cancelled', payload);
     this.server.to(`kitchen:${order.businessId}`).emit('order:cancelled', payload);
     this.logger.debug({ orderId: order.id }, 'order:cancelled emitted');
+    this.emitDisplayRemoved(order);
   }
 
   /** DELIVERED → session (customer sees payment due) + business (cashier payment queue opens). */
@@ -365,6 +414,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
     this.server.to(`business:${order.businessId}`).emit('order:payment-failed', payload);
     this.logger.debug({ orderId: order.id, reason }, 'order:payment-failed emitted');
+    this.emitDisplayRemoved(order);
   }
 
   /** REFUNDED → session + business + kitchen (a paid-then-refunded order reopened). */
@@ -377,6 +427,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.server.to(`business:${order.businessId}`).emit('order:refunded', payload);
     this.server.to(`kitchen:${order.businessId}`).emit('order:refunded', payload);
     this.logger.debug({ orderId: order.id, refundId }, 'order:refunded emitted');
+    this.emitDisplayRemoved(order);
   }
 
   /**
@@ -498,5 +549,19 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
       playSound,
       at: new Date().toISOString(),
     };
+  }
+
+  /** Order entered a displayable status (CONFIRMED/IN_KITCHEN/READY) → display room, sanitized. */
+  private emitDisplayUpdate(order: Order): void {
+    const payload: DisplayOrderPayload = buildDisplayOrderPayload(order);
+    this.server.to(`display:${order.businessId}`).emit('display:order-updated', payload);
+    this.logger.debug({ orderId: order.id }, 'display:order-updated emitted');
+  }
+
+  /** Order left the displayable set (served/cancelled/payment-failed/refunded) → drop it. */
+  private emitDisplayRemoved(order: Order): void {
+    const payload: DisplayOrderRemovedPayload = { orderId: order.id };
+    this.server.to(`display:${order.businessId}`).emit('display:order-removed', payload);
+    this.logger.debug({ orderId: order.id }, 'display:order-removed emitted');
   }
 }

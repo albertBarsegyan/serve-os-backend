@@ -12,10 +12,11 @@ import { KitchenStation } from '@modules/kitchen/entities/kitchen-station.entity
 import { TenantAccessService } from '@common/guards/tenant-access.service';
 import { PermissionGuard } from '@common/guards/permission.guard';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
+import { Display } from '@modules/display/entities/display.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Order, KitchenStation, Business, Staff, TableSession]),
+    TypeOrmModule.forFeature([Order, KitchenStation, Business, Staff, TableSession, Display]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

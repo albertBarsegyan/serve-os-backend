@@ -2,6 +2,7 @@ import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nes
 import { Observable } from 'rxjs';
 import { PinoLogger } from 'nestjs-pino';
 import { AuthenticatedRequest } from '@common/types/authenticated-request.type';
+import { maskDisplayTokenInUrl } from '@common/utils/log-redaction.util';
 
 @Injectable()
 export class TenantInterceptor implements NestInterceptor {
@@ -22,7 +23,7 @@ export class TenantInterceptor implements NestInterceptor {
 
       this.logger.debug(
         {
-          path: request.url,
+          path: maskDisplayTokenInUrl(request.url),
           method: request.method,
           userId: principalId,
           businessId: request.businessId,
