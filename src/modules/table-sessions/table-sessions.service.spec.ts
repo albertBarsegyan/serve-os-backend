@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { NotFoundException } from '@nestjs/common';
+import { QueryFailedError } from 'typeorm';
 import { TableSessionsService } from './table-sessions.service';
 import { TableSession } from './table-session.entity';
 import { Table } from '@modules/tables/entities/table.entity';
@@ -123,5 +124,106 @@ describe('TableSessionsService.resumeByToken', () => {
 
     expect(result.paymentMethods).toHaveLength(1);
     expect(result.paymentMethods[0].method).toBe('CASH');
+  });
+});
+
+describe('TableSessionsService.scan (find-or-create + concurrent scans)', () => {
+  let service: TableSessionsService;
+  let sessionRepo: ReturnType<typeof mockRepo<TableSession>>;
+  let tableRepo: ReturnType<typeof mockRepo<Table>>;
+  let businessRepo: ReturnType<typeof mockRepo<Business>>;
+
+  const qrCode = 'qr-code-1';
+  const table = {
+    id: 'table-uuid-1',
+    businessId: 'business-uuid-1',
+    number: 5,
+    qrCode,
+  } as Table;
+  const business = {
+    id: 'business-uuid-1',
+    name: 'Test Restaurant',
+    logoUrl: null,
+    paymentMethods: [],
+  } as unknown as Business;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        TableSessionsService,
+        { provide: getRepositoryToken(TableSession), useFactory: mockRepo },
+        { provide: getRepositoryToken(Table), useFactory: mockRepo },
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(Order), useFactory: mockRepo },
+        { provide: KitchenGateway, useValue: { emitSessionClosed: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<TableSessionsService>(TableSessionsService);
+    sessionRepo = module.get(getRepositoryToken(TableSession));
+    tableRepo = module.get(getRepositoryToken(Table));
+    businessRepo = module.get(getRepositoryToken(Business));
+
+    tableRepo.findOne.mockResolvedValue(table);
+    businessRepo.findOne.mockResolvedValue(business);
+  });
+
+  it('creates a new active session on the first scan of a table', async () => {
+    const created = {
+      sessionToken: 'new-token',
+      id: 'session-1',
+      businessId: table.businessId,
+      tableId: table.id,
+    } as TableSession;
+
+    sessionRepo.findOne.mockResolvedValue(null);
+    sessionRepo.create.mockReturnValue(created);
+    sessionRepo.save.mockResolvedValue(created);
+
+    const result = await service.scan(qrCode);
+
+    expect(result.sessionToken).toBe('new-token');
+    expect(sessionRepo.save).toHaveBeenCalledTimes(1);
+    expect(tableRepo.update).toHaveBeenCalledWith({ id: table.id }, { isReserved: true });
+  });
+
+  it('returns the existing active session on a second scan of the same table', async () => {
+    const existing = {
+      sessionToken: 'existing-token',
+      id: 'session-1',
+      businessId: table.businessId,
+      tableId: table.id,
+    } as TableSession;
+
+    sessionRepo.findOne.mockResolvedValue(existing);
+
+    const result = await service.scan(qrCode);
+
+    expect(result.sessionToken).toBe('existing-token');
+    expect(sessionRepo.save).not.toHaveBeenCalled();
+    expect(tableRepo.update).not.toHaveBeenCalled();
+  });
+
+  it('joins the winning session instead of erroring when two scans race to create one', async () => {
+    const winner = {
+      sessionToken: 'winner-token',
+      id: 'session-1',
+      businessId: table.businessId,
+      tableId: table.id,
+    } as TableSession;
+    const conflict = new QueryFailedError('INSERT ...', undefined, {
+      code: '23505',
+    } as unknown as Error);
+
+    // First check sees no active session yet; both requests race to insert.
+    // This request loses the DB-level unique index race and falls back to
+    // re-fetching the session the other request just created.
+    sessionRepo.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(winner);
+    sessionRepo.save.mockRejectedValueOnce(conflict);
+
+    const result = await service.scan(qrCode);
+
+    expect(result.sessionToken).toBe('winner-token');
+    expect(tableRepo.update).not.toHaveBeenCalled();
   });
 });

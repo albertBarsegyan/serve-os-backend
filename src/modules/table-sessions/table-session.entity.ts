@@ -6,12 +6,19 @@ import {
   JoinColumn,
   OneToMany,
   CreateDateColumn,
+  Index,
 } from 'typeorm';
 import { Table } from '@modules/tables/entities/table.entity';
 import { Business } from '@modules/business/entities/business.entity';
 import { Order } from '@modules/orders/entities/order.entity';
 
 @Entity('table_sessions')
+// Guards against two concurrent QR scans both winning a check-then-insert race
+// and opening two active sessions for the same table.
+@Index('IDX_table_sessions_active_table', ['tableId'], {
+  unique: true,
+  where: '"isActive" = true',
+})
 export class TableSession {
   @PrimaryGeneratedColumn('uuid')
   id: string;

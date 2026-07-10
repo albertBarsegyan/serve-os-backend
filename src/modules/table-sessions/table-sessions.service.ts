@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
-import { In, Repository } from 'typeorm';
+import { In, QueryFailedError, Repository } from 'typeorm';
 import { TableSession } from './table-session.entity';
 import { Table } from '@modules/tables/entities/table.entity';
 import { Business } from '@modules/business/entities/business.entity';
@@ -64,24 +64,7 @@ export class TableSessionsService {
       throw new NotFoundException('Business not found or inactive');
     }
 
-    let session = await this.tableSessionRepository.findOne({
-      where: { businessId: table.businessId, tableId: table.id, isActive: true },
-      order: { openedAt: 'DESC' },
-    });
-
-    if (!session) {
-      session = await this.tableSessionRepository.save(
-        this.tableSessionRepository.create({
-          businessId: table.businessId,
-          tableId: table.id,
-          sessionToken: generateSessionToken(),
-          isActive: true,
-          closedAt: null,
-          expiresAt: newExpiresAt(),
-        }),
-      );
-      await this.tableRepository.update({ id: table.id }, { isReserved: true });
-    }
+    const session = await this.findOrCreateForTable(table.businessId, table.id);
 
     return {
       sessionToken: session.sessionToken,
@@ -144,13 +127,17 @@ export class TableSessionsService {
   }
 
   async findOrCreateForTable(businessId: string, tableId: string): Promise<TableSession> {
-    let session = await this.tableSessionRepository.findOne({
+    const existing = await this.tableSessionRepository.findOne({
       where: { businessId, tableId, isActive: true },
       order: { openedAt: 'DESC' },
     });
 
-    if (!session) {
-      session = await this.tableSessionRepository.save(
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      const session = await this.tableSessionRepository.save(
         this.tableSessionRepository.create({
           businessId,
           tableId,
@@ -161,9 +148,33 @@ export class TableSessionsService {
         }),
       );
       await this.tableRepository.update({ id: tableId }, { isReserved: true });
+      return session;
+    } catch (error) {
+      // A concurrent scan won the race and already holds the partial unique index
+      // on (tableId) WHERE isActive — fall back to joining its session instead of erroring.
+      if (this.isActiveSessionConflict(error)) {
+        const winner = await this.tableSessionRepository.findOne({
+          where: { businessId, tableId, isActive: true },
+          order: { openedAt: 'DESC' },
+        });
+        if (winner) {
+          return winner;
+        }
+      }
+      throw error;
     }
+  }
 
-    return session;
+  private isActiveSessionConflict(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) {
+      return false;
+    }
+    const driverError: unknown = error.driverError;
+    const code =
+      driverError && typeof driverError === 'object' && 'code' in driverError
+        ? driverError.code
+        : undefined;
+    return code === '23505';
   }
 
   async getActiveByToken(sessionToken: string): Promise<TableSession> {
