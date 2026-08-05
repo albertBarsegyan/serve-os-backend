@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 import bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
@@ -70,18 +70,43 @@ export class StaffService {
   }
 
   /**
-   * Throws 409 if another active staff member in this business already has
-   * this email. Must be called with an already-normalized email — every
-   * write path funnels through here so the DB-level unique index on
-   * (businessId, lower(email)) is never the first line of defense.
+   * Throws 409 if another staff member in this business already has this
+   * email. This includes soft-deleted rows because the partial database index
+   * applies to every non-null email, regardless of deletion state.
    */
   private async assertEmailAvailable(businessId: string, normalizedEmail: string): Promise<void> {
     const existing = await this.staffRepository.findOne({
       where: { businessId, email: normalizedEmail },
+      withDeleted: true,
     });
     if (existing) {
       throw new ConflictException('Email already in use for this business');
     }
+  }
+
+  private async saveStaffWithUniqueEmailHandling(staff: Staff): Promise<Staff> {
+    try {
+      return await this.staffRepository.save(staff);
+    } catch (error) {
+      if (this.isStaffEmailUniqueViolation(error)) {
+        throw new ConflictException('Email already in use for this business');
+      }
+      throw error;
+    }
+  }
+
+  private isStaffEmailUniqueViolation(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) {
+      return false;
+    }
+
+    const driverError: unknown = error.driverError;
+    if (!driverError || typeof driverError !== 'object') {
+      return false;
+    }
+
+    const { code, constraint } = driverError as { code?: unknown; constraint?: unknown };
+    return code === '23505' && constraint === 'UQ_staff_businessId_email';
   }
 
   constructor(
@@ -152,7 +177,7 @@ export class StaffService {
       isActive: true,
     });
 
-    return this.staffRepository.save(staff);
+    return this.saveStaffWithUniqueEmailHandling(staff);
   }
 
   /**
@@ -184,7 +209,7 @@ export class StaffService {
       isActive: true,
     });
 
-    const savedStaff = await this.staffRepository.save(staff);
+    const savedStaff = await this.saveStaffWithUniqueEmailHandling(staff);
 
     // Send invite email
     this.emailService.sendStaffInviteEmail(normalizedEmail, dto.displayName, inviteToken);

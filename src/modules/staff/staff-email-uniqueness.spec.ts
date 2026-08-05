@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import { QueryFailedError } from 'typeorm';
 import { StaffService } from './staff.service';
 import { Staff } from './entities/staff.entity';
 import { StaffRole } from '@common/enums/staff-role.enum';
@@ -151,6 +152,29 @@ describe('Staff email uniqueness within a business (password creation)', () => {
     );
 
     expect(staff.email).toBe('fresh@example.com');
+  });
+
+  it('returns a conflict when a concurrent insert loses the database unique-index race', async () => {
+    const staffRepo = makeStatefulStaffRepo();
+    const service = buildStaffService(staffRepo);
+    const conflict = new QueryFailedError('INSERT INTO staff ...', undefined, {
+      code: '23505',
+      constraint: 'UQ_staff_businessId_email',
+    } as unknown as Error);
+    staffRepo.save.mockRejectedValueOnce(conflict);
+
+    await expect(
+      service.createWithPassword(
+        {
+          displayName: 'Racing Manager',
+          role: StaffRole.MANAGER,
+          email: 'race@example.com',
+          temporaryPassword: 'temp12345',
+        },
+        OWNER_ID,
+        BUSINESS_ID,
+      ),
+    ).rejects.toThrow(ConflictException);
   });
 });
 

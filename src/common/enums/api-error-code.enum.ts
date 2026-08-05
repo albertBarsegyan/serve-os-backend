@@ -80,6 +80,7 @@ export const ERROR_MESSAGE_TO_CODE_MAP: Record<string, ApiErrorCode> = {
   'Staff access required': ApiErrorCode.STAFF_ACCESS_REQUIRED,
   'You do not have access to this business': ApiErrorCode.BUSINESS_ACCESS_DENIED,
   'User already exists': ApiErrorCode.CONFLICT,
+  'Email already in use for this business': ApiErrorCode.CONFLICT,
 };
 
 /**

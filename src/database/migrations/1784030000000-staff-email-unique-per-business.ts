@@ -1,19 +1,17 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class StaffEmailUniquePerBusiness1784030000000 implements MigrationInterface {
-  public async up(queryRunner: QueryRunner): Promise<void> {
-    // Normalize existing data first so the index (and the app-level checks
-    // that now guard every write path) are comparing on the same casing.
-    await queryRunner.query(
-      `UPDATE "staff" SET "email" = lower(trim("email")) WHERE "email" IS NOT NULL`,
-    );
+  name = 'StaffEmailUniquePerBusiness1784030000000';
 
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    // Check the canonical values first. This leaves production data untouched
+    // when remediation is needed; TypeORM runs this migration transactionally.
     const duplicates: Array<{ businessId: string; email_lc: string; count: string }> =
       (await queryRunner.query(`
-        SELECT "businessId", "email" AS email_lc, COUNT(*) AS count
+        SELECT "businessId", lower(btrim("email")) AS email_lc, COUNT(*) AS count
         FROM "staff"
         WHERE "email" IS NOT NULL
-        GROUP BY "businessId", "email"
+        GROUP BY "businessId", lower(btrim("email"))
         HAVING COUNT(*) > 1
       `)) as Array<{ businessId: string; email_lc: string; count: string }>;
 
@@ -23,9 +21,15 @@ export class StaffEmailUniquePerBusiness1784030000000 implements MigrationInterf
         .join('; ');
       throw new Error(
         `Cannot add unique staff email index: duplicate (businessId, email) rows exist — ${summary}. ` +
-          `Resolve these manually (rename or deactivate the extra accounts) before re-running this migration.`,
+          `Resolve them manually before re-running this migration; see docs/staff-email-unique-per-business.md.`,
       );
     }
+
+    // Persist canonical values before enforcing the index so future lookups and
+    // writes compare the same representation.
+    await queryRunner.query(
+      `UPDATE "staff" SET "email" = lower(btrim("email")) WHERE "email" IS DISTINCT FROM lower(btrim("email"))`,
+    );
 
     await queryRunner.query(
       `CREATE UNIQUE INDEX "UQ_staff_businessId_email" ON "staff" ("businessId", "email") WHERE "email" IS NOT NULL`,
