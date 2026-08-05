@@ -20,6 +20,7 @@ import type { Response } from 'express';
 import { StaffService } from './staff.service';
 import { AuthGuard } from '@nestjs/passport';
 import { BusinessAccessGuard } from '@common/guards/business-access.guard';
+import { EmailVerifiedGuard } from '@modules/auth/guards/email-verified.guard';
 import { PaginationDto } from '@common/dto/pagination.dto';
 import { Public } from '@common/decorators/public.decorator';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
@@ -49,7 +50,7 @@ export class StaffController {
   ) {}
 
   @Post('businesses/:businessId/staff/invite')
-  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
+  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard, EmailVerifiedGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create staff member and send invite email' })
   @ApiResponse({ status: 201, description: 'Invite sent successfully' })
@@ -64,7 +65,7 @@ export class StaffController {
   }
 
   @Post('businesses/:businessId/staff/pin')
-  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
+  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard, EmailVerifiedGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create staff member with PIN authentication' })
   @ApiResponse({ status: 201, description: 'Staff created successfully' })
@@ -81,7 +82,7 @@ export class StaffController {
   // ── Creation (owner-only) ─────────────────────────────────────────────────
 
   @Post('businesses/:businessId/staff/password')
-  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard)
+  @UseGuards(AuthGuard('jwt'), BusinessAccessGuard, EmailVerifiedGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create staff member with password authentication' })
   @ApiResponse({ status: 201, description: 'Staff created successfully' })

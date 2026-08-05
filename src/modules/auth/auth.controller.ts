@@ -24,6 +24,7 @@ import {
   SlugStaffLoginDto,
   StaffLookupDto,
   StaffPinLoginDto,
+  VerifyEmailDto,
 } from './dto/auth.dto';
 import { Public } from '@common/decorators/public.decorator';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
@@ -161,9 +162,11 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Register a new user' })
+  @ApiOperation({ summary: 'Register a new user — sends an email verification link' })
   @ApiResponse({ status: 201, description: 'User successfully registered' })
   @ApiResponse({
     status: 409,
@@ -174,6 +177,18 @@ export class AuthController {
     const { tokens, user } = await this.authService.register(registerDto);
     this.setTokenCookies(res, tokens.accessToken, tokens.refreshToken);
     return { user, tokens };
+  }
+
+  @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify account email via the token sent on registration' })
+  @ApiResponse({ status: 200, description: 'Email verified' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired verification token' })
+  async verifyEmail(@Body() dto: VerifyEmailDto) {
+    return this.authService.verifyEmail(dto.token);
   }
 
   @Public()

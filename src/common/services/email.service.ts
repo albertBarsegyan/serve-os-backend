@@ -33,4 +33,21 @@ export class EmailService {
     //   },
     // });
   }
+
+  /**
+   * Send account email-verification email
+   * In production, replace with actual email sending (e.g., SendGrid, AWS SES, etc.)
+   */
+  sendVerificationEmail(email: string, verificationToken: string): void {
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3001');
+    const verifyLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
+
+    // TODO: Implement actual email sending
+    // eslint-disable-next-line no-console
+    console.log(`
+      [EmailService] Sending verification email:
+      To: ${email}
+      Link: ${verifyLink}
+    `);
+  }
 }
