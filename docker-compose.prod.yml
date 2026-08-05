@@ -77,8 +77,7 @@ services:
     image: ghcr.io/albertbarsegyan/serve-os-backend:latest
     container_name: serve_os_backend_prod
     restart: unless-stopped
-    ports:
-      - "${PORT:-4000}:4000"
+
     env_file:
       - .env
     depends_on:

@@ -1,4 +1,12 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -39,6 +47,8 @@ export interface StaffTokenPair {
 export class StaffService {
   private readonly PIN_HASH_ROUNDS = 10;
   private readonly EMPLOYEE_ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  private readonly PIN_LOCKOUT_THRESHOLD = 3;
+  private readonly PIN_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
   private async generateUniqueEmployeeId(businessId: string): Promise<string> {
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -53,6 +63,25 @@ export class StaffService {
       if (!existing) return candidate;
     }
     throw new Error('Failed to generate unique employeeId after 10 attempts');
+  }
+
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
+  }
+
+  /**
+   * Throws 409 if another active staff member in this business already has
+   * this email. Must be called with an already-normalized email — every
+   * write path funnels through here so the DB-level unique index on
+   * (businessId, lower(email)) is never the first line of defense.
+   */
+  private async assertEmailAvailable(businessId: string, normalizedEmail: string): Promise<void> {
+    const existing = await this.staffRepository.findOne({
+      where: { businessId, email: normalizedEmail },
+    });
+    if (existing) {
+      throw new ConflictException('Email already in use for this business');
+    }
   }
 
   constructor(
@@ -101,6 +130,11 @@ export class StaffService {
     createdByOwnerId: string,
     businessId: string,
   ): Promise<Staff> {
+    const normalizedEmail = dto.email ? this.normalizeEmail(dto.email) : null;
+    if (normalizedEmail) {
+      await this.assertEmailAvailable(businessId, normalizedEmail);
+    }
+
     // Hash the temporary password
     const hashedPassword = await bcrypt.hash(dto.temporaryPassword, this.PIN_HASH_ROUNDS);
     const employeeId = await this.generateUniqueEmployeeId(businessId);
@@ -112,7 +146,7 @@ export class StaffService {
       role: dto.role,
       authType: StaffAuthType.PASSWORD,
       passwordHash: hashedPassword,
-      email: dto.email || null,
+      email: normalizedEmail,
       mustChangePassword: true, // Force password change on first login
       employeeId,
       isActive: true,
@@ -129,6 +163,9 @@ export class StaffService {
     createdByOwnerId: string,
     businessId: string,
   ): Promise<Staff> {
+    const normalizedEmail = this.normalizeEmail(dto.email);
+    await this.assertEmailAvailable(businessId, normalizedEmail);
+
     const inviteToken = uuidv4();
     const inviteExpiresAt = new Date();
     inviteExpiresAt.setHours(inviteExpiresAt.getHours() + 72); // 72 hours from now
@@ -139,7 +176,7 @@ export class StaffService {
       createdByOwnerId,
       displayName: dto.displayName,
       role: dto.role,
-      email: dto.email,
+      email: normalizedEmail,
       authType: StaffAuthType.INVITE_PENDING,
       inviteToken,
       inviteExpiresAt,
@@ -150,7 +187,7 @@ export class StaffService {
     const savedStaff = await this.staffRepository.save(staff);
 
     // Send invite email
-    this.emailService.sendStaffInviteEmail(dto.email, dto.displayName, inviteToken);
+    this.emailService.sendStaffInviteEmail(normalizedEmail, dto.displayName, inviteToken);
 
     return savedStaff;
   }
@@ -189,13 +226,13 @@ export class StaffService {
   }
 
   /**
-   * Login with PIN
+   * Verify a staff PIN and manage lockout state. This is the single source of
+   * truth for PIN authentication — every entry point that accepts a staff PIN
+   * (auth.service's /auth/staff/pin, this module's /login/pin, and the slug
+   * login) must call this so failed attempts and lockout can't be bypassed by
+   * hitting a different endpoint.
    */
-  async loginWithPin(
-    businessId: string,
-    staffId: string,
-    pin: string,
-  ): Promise<{ tokens: StaffTokenPair; user: StaffAuthUser }> {
+  async verifyPinOrThrow(businessId: string, staffId: string, pin: string): Promise<Staff> {
     const staff = await this.staffRepository.findOne({
       where: {
         id: staffId,
@@ -207,17 +244,52 @@ export class StaffService {
     });
 
     if (!staff) {
-      throw new BadRequestException('Staff member not found or invalid PIN authentication method');
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (staff.pinLockedUntil && staff.pinLockedUntil > new Date()) {
+      throw new HttpException({ message: 'Account locked' }, HttpStatus.LOCKED);
     }
 
     if (!staff.pin) {
-      throw new BadRequestException('PIN not set for this staff member');
+      throw new UnauthorizedException('Invalid credentials');
     }
 
     const isValidPin = await bcrypt.compare(pin, staff.pin);
+
     if (!isValidPin) {
-      throw new BadRequestException('Invalid PIN');
+      const attempts = (staff.pinFailedAttempts ?? 0) + 1;
+      if (attempts >= this.PIN_LOCKOUT_THRESHOLD) {
+        await this.staffRepository.update(staff.id, {
+          pinFailedAttempts: attempts,
+          pinLockedUntil: new Date(Date.now() + this.PIN_LOCKOUT_DURATION_MS),
+        });
+        throw new UnauthorizedException('Too many failed attempts. Account locked for 15 minutes.');
+      }
+      await this.staffRepository.update(staff.id, { pinFailedAttempts: attempts });
+      throw new UnauthorizedException(
+        `Invalid PIN. ${this.PIN_LOCKOUT_THRESHOLD - attempts} attempt${
+          this.PIN_LOCKOUT_THRESHOLD - attempts === 1 ? '' : 's'
+        } remaining.`,
+      );
     }
+
+    if (staff.pinFailedAttempts || staff.pinLockedUntil) {
+      await this.staffRepository.update(staff.id, { pinFailedAttempts: 0, pinLockedUntil: null });
+    }
+
+    return staff;
+  }
+
+  /**
+   * Login with PIN
+   */
+  async loginWithPin(
+    businessId: string,
+    staffId: string,
+    pin: string,
+  ): Promise<{ tokens: StaffTokenPair; user: StaffAuthUser }> {
+    const staff = await this.verifyPinOrThrow(businessId, staffId, pin);
 
     const payload = {
       staffId: staff.id,
@@ -245,7 +317,7 @@ export class StaffService {
   > {
     const staff = await this.staffRepository.findOne({
       where: {
-        email,
+        email: this.normalizeEmail(email),
         businessId,
         isActive: true,
       },

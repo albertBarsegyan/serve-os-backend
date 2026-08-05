@@ -23,6 +23,7 @@ import type { Response } from 'express';
 import { setBusinessCookie } from '@common/utils/business.utils';
 import { ConfigService } from '@nestjs/config';
 import { UnifiedAuthGuard } from '@modules/auth/guards/unified-auth.guard';
+import { EmailVerifiedGuard } from '@modules/auth/guards/email-verified.guard';
 import { GetAuthPayload } from '@modules/auth/decorators/auth-payload.decorator';
 import type { AuthPayload } from '@modules/auth/types/auth-payload.type';
 
@@ -36,7 +37,7 @@ export class BusinessController {
   ) {}
 
   @Post()
-  @UseGuards(UnifiedAuthGuard)
+  @UseGuards(UnifiedAuthGuard, EmailVerifiedGuard)
   @AllowWithoutBusiness()
   @ApiOperation({ summary: 'Create a new business' })
   @ApiResponse({ status: 201, description: 'Business successfully created' })
@@ -107,7 +108,7 @@ export class BusinessController {
   }
 
   @Roles(Role.OWNER)
-  @UseGuards(UnifiedAuthGuard)
+  @UseGuards(UnifiedAuthGuard, EmailVerifiedGuard)
   @Put(':id/payment-methods')
   @ApiOperation({ summary: 'Create or update a payment method configuration' })
   upsertPaymentMethod(
@@ -119,7 +120,7 @@ export class BusinessController {
   }
 
   @Roles(Role.OWNER)
-  @UseGuards(UnifiedAuthGuard)
+  @UseGuards(UnifiedAuthGuard, EmailVerifiedGuard)
   @Delete(':id/payment-methods/:methodId')
   @ApiOperation({ summary: 'Remove a payment method configuration' })
   deletePaymentMethod(

@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   ConflictException,
   NotFoundException,
+  BadRequestException,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
@@ -11,16 +12,22 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
+import { randomBytes } from 'crypto';
 import { User } from '@modules/users/entities/user.entity';
 import { Business } from '@modules/business/entities/business.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
+import { StaffService } from '@modules/staff/staff.service';
+import { EmailService } from '@common/services/email.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 import { AuthPayload, OwnerPayload, StaffPayload } from './types/auth-payload.type';
 import * as bcrypt from 'bcrypt';
 import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
+import { StaffAuthType } from '@common/enums/staff-auth-type.enum';
 import { StaffPermission, ROLE_PERMISSION_MAP } from '@common/enums/staff-permission.enum';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
+
+const EMAIL_VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface TokenPair {
   accessToken: string;
@@ -64,6 +71,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly logger: PinoLogger,
+    private readonly staffService: StaffService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -137,7 +146,8 @@ export class AuthService {
       where: { email: registerDto.email },
     });
 
-    if (existingUser) {
+    // A verified account owns this email — no reclaiming it.
+    if (existingUser?.emailVerified) {
       this.logger.warn(
         { email: registerDto.email },
         'Register rejected because user already exists',
@@ -146,15 +156,38 @@ export class AuthService {
     }
 
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
-    const user = this.userRepository.create({
-      email: registerDto.email,
-      password: hashedPassword,
-      firstName: registerDto.firstName,
-      lastName: registerDto.lastName,
-      role: Role.OWNER,
-    });
+    const verificationToken = randomBytes(32).toString('hex');
+    const verificationExpiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS);
 
-    const savedUser = await this.userRepository.save(user);
+    let savedUser: User;
+    if (existingUser) {
+      // Reclaim: the prior registration for this email was never verified,
+      // so it never gained any real capability. Whoever proves ownership of
+      // the inbox by clicking the new verification link takes over.
+      existingUser.password = hashedPassword;
+      existingUser.firstName = registerDto.firstName ?? existingUser.firstName;
+      existingUser.lastName = registerDto.lastName ?? existingUser.lastName;
+      existingUser.emailVerified = false;
+      existingUser.emailVerificationToken = verificationToken;
+      existingUser.emailVerificationExpiresAt = verificationExpiresAt;
+      savedUser = await this.userRepository.save(existingUser);
+      this.logger.warn({ userId: savedUser.id }, 'Unverified account reclaimed by new registrant');
+    } else {
+      const user = this.userRepository.create({
+        email: registerDto.email,
+        password: hashedPassword,
+        firstName: registerDto.firstName,
+        lastName: registerDto.lastName,
+        role: Role.OWNER,
+        emailVerified: false,
+        emailVerificationToken: verificationToken,
+        emailVerificationExpiresAt: verificationExpiresAt,
+      });
+      savedUser = await this.userRepository.save(user);
+    }
+
+    this.emailService.sendVerificationEmail(savedUser.email, verificationToken);
+
     const tokens = await this.generateTokensForOwner(savedUser);
     this.logger.info({ userId: savedUser.id }, 'User registered successfully');
 
@@ -162,6 +195,26 @@ export class AuthService {
       tokens,
       user: this.buildAuthUser(savedUser),
     };
+  }
+
+  async verifyEmail(token: string): Promise<{ success: boolean }> {
+    const user = await this.userRepository.findOne({
+      where: { emailVerificationToken: token },
+    });
+
+    if (!user || !user.emailVerificationExpiresAt || user.emailVerificationExpiresAt < new Date()) {
+      throw new BadRequestException('Invalid or expired verification token');
+    }
+
+    await this.userRepository.update(user.id, {
+      emailVerified: true,
+      emailVerificationToken: null,
+      emailVerificationExpiresAt: null,
+    });
+
+    this.logger.info({ userId: user.id }, 'Email verified');
+
+    return { success: true };
   }
 
   async login(loginDto: LoginDto): Promise<{ tokens: TokenPair; user: AuthUser }> {
@@ -302,7 +355,7 @@ export class AuthService {
     const staff = await this.staffRepository.findOne({
       where: isUuid
         ? { businessId: business.id, id: identifier, isActive: true }
-        : { businessId: business.id, email: identifier, isActive: true },
+        : { businessId: business.id, email: identifier.trim().toLowerCase(), isActive: true },
       relations: { business: true },
     });
 
@@ -311,39 +364,51 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const pinOk = staff.pin ? await bcrypt.compare(secret, staff.pin) : false;
-    const passwordOk =
-      !pinOk && staff.passwordHash ? await bcrypt.compare(secret, staff.passwordHash) : false;
+    let authenticatedStaff: Staff;
 
-    if (!pinOk && !passwordOk) {
-      this.logger.warn({ slug, staffId: staff.id }, 'loginStaffBySlug: secret mismatch');
+    if (staff.authType === StaffAuthType.PIN) {
+      // Route through the same lockout-aware verifier as every other PIN
+      // entry point — otherwise this endpoint bypasses PIN lockout entirely.
+      authenticatedStaff = await this.staffService.verifyPinOrThrow(business.id, staff.id, secret);
+    } else if (staff.passwordHash) {
+      const passwordOk = await bcrypt.compare(secret, staff.passwordHash);
+      if (!passwordOk) {
+        this.logger.warn({ slug, staffId: staff.id }, 'loginStaffBySlug: secret mismatch');
+        throw new UnauthorizedException('Invalid credentials');
+      }
+      authenticatedStaff = staff;
+    } else {
+      this.logger.warn({ slug, staffId: staff.id }, 'loginStaffBySlug: no credential configured');
       throw new UnauthorizedException('Invalid credentials');
     }
 
     const payload: StaffPayload = {
       type: 'staff',
-      staffId: staff.id,
-      businessId: staff.businessId,
-      role: staff.role,
+      staffId: authenticatedStaff.id,
+      businessId: authenticatedStaff.businessId,
+      role: authenticatedStaff.role,
     };
 
-    if (staff.mustChangePassword) {
+    if (authenticatedStaff.mustChangePassword) {
       const accessToken = await this.jwtService.signAsync(payload, { expiresIn: '1h' });
-      this.logger.info({ staffId: staff.id }, 'Staff authenticated but must change password');
+      this.logger.info(
+        { staffId: authenticatedStaff.id },
+        'Staff authenticated but must change password',
+      );
       return {
         requiresPasswordChange: true,
         tokens: { accessToken },
-        user: this.buildStaffUser(staff),
+        user: this.buildStaffUser(authenticatedStaff),
       };
     }
 
     const accessToken = await this.jwtService.signAsync(payload, { expiresIn: '24h' });
     this.logger.info(
-      { staffId: staff.id, businessId: staff.businessId },
+      { staffId: authenticatedStaff.id, businessId: authenticatedStaff.businessId },
       'Staff authenticated via slug',
     );
 
-    return { tokens: { accessToken }, user: this.buildStaffUser(staff) };
+    return { tokens: { accessToken }, user: this.buildStaffUser(authenticatedStaff) };
   }
 
   private buildStaffUser(staff: Staff): StaffAuthUser {
@@ -440,44 +505,11 @@ export class AuthService {
     businessId: string,
     ip?: string,
   ): Promise<{ tokens: { accessToken: string }; user: StaffAuthUser }> {
-    const staff = await this.staffRepository.findOne({
-      where: { id: staffId, businessId },
-      relations: { business: true },
-    });
-
-    if (!staff) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    if (staff.pinLockedUntil && staff.pinLockedUntil > new Date()) {
-      throw new HttpException({ message: 'Account locked' }, HttpStatus.LOCKED);
-    }
-
-    if (!staff.pin) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    const isValid = await bcrypt.compare(pin, staff.pin);
-
-    if (!isValid) {
-      const attempts = (staff.pinFailedAttempts ?? 0) + 1;
-      if (attempts >= 3) {
-        const lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
-        await this.staffRepository.update(staff.id, {
-          pinFailedAttempts: attempts,
-          pinLockedUntil: lockedUntil,
-        });
-        throw new UnauthorizedException('Too many failed attempts. Account locked for 15 minutes.');
-      }
-      await this.staffRepository.update(staff.id, { pinFailedAttempts: attempts });
-      throw new UnauthorizedException(
-        `Invalid PIN. ${3 - attempts} attempt${3 - attempts === 1 ? '' : 's'} remaining.`,
-      );
-    }
+    // Lockout state and PIN verification live in StaffService.verifyPinOrThrow
+    // so this can't be bypassed by calling a different staff-login endpoint.
+    const staff = await this.staffService.verifyPinOrThrow(businessId, staffId, pin);
 
     await this.staffRepository.update(staff.id, {
-      pinFailedAttempts: 0,
-      pinLockedUntil: null,
       lastLoginAt: new Date(),
       lastLoginIp: ip ?? null,
     });

@@ -94,3 +94,10 @@ export class RegisterDto {
   @IsString()
   lastName?: string;
 }
+
+export class VerifyEmailDto {
+  @ApiProperty({ example: 'a1b2c3...', description: 'Email verification token' })
+  @IsString()
+  @IsNotEmpty()
+  token: string;
+}
