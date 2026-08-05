@@ -22,6 +22,10 @@ import { BusinessFeature } from '@common/enums/business-feature.enum';
 
 @Entity('staff')
 @Unique(['businessId', 'employeeId'])
+@Index('UQ_staff_businessId_email', ['businessId', 'email'], {
+  unique: true,
+  where: '"email" IS NOT NULL',
+})
 export class Staff {
   @PrimaryGeneratedColumn('uuid')
   id: string;
