@@ -21,7 +21,7 @@ export class EmailVerifiedGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const payload = request.user;
 
-    if (!payload || payload.type !== 'owner') {
+    if (payload?.type !== 'owner') {
       return true;
     }
 
