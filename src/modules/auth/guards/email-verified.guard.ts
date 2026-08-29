@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '@modules/users/entities/user.entity';
@@ -26,12 +26,12 @@ export class EmailVerifiedGuard implements CanActivate {
     }
 
     const user = await this.userRepository.findOne({ where: { id: payload.userId } });
-
-    if (!user || !user.emailVerified) {
-      throw new ForbiddenException(
-        'Please verify your email address before performing this action.',
-      );
-    }
+    // TODO implement email verification check when the feature is ready
+    // if (!user || !user.emailVerified) {
+    //   throw new ForbiddenException(
+    //     'Please verify your email address before performing this action.',
+    //   );
+    // }
 
     return true;
   }
