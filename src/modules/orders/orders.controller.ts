@@ -230,6 +230,26 @@ export class OrdersController {
   }
 
   /**
+   * Retries payment for a PAYMENT_FAILED order (DINE_IN only — see OrdersService.retryPayment):
+   * returns it to DELIVERED and reopens the cashier payment queue, so a single failed online
+   * payment doesn't force staff to cancel the whole order.
+   */
+  @RequireBusinessFeature(
+    [BusinessFeature.ORDER_DINE_IN, BusinessFeature.ORDER_TAKEAWAY, BusinessFeature.ORDER_DELIVERY],
+    'any',
+  )
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.CASHIER)
+  @Post(':id/payment/retry')
+  @ApiOperation({
+    summary: 'Retry payment for a PAYMENT_FAILED order (OWNER/MANAGER/CASHIER)',
+  })
+  @ApiResponse({ status: 200, description: 'Order returned to DELIVERED; payment queue reopened' })
+  @ApiResponse({ status: 400, description: 'Order is not PAYMENT_FAILED' })
+  retryPayment(@Tenant(true) businessId: string, @Param('id', ParseUUIDPipe) id: string) {
+    return this.ordersService.retryPayment(businessId, id);
+  }
+
+  /**
    * Refunds a closed (paid) order. No payment-provider refund integration exists yet,
    * so this only records the order-level refund and broadcasts it.
    */

@@ -5,6 +5,7 @@ import { MenuService } from './menu.service';
 import { MenuCategory } from './entities/category.entity';
 import { Product } from './entities/product.entity';
 import { ModifierGroup } from '@modules/modifiers/entities/modifier-group.entity';
+import { KitchenGateway } from '@modules/kitchen/kitchen.gateway';
 
 function makeProduct(imageUrls: string[]): Product {
   return {
@@ -54,6 +55,10 @@ describe('MenuService.reorderProductImages', () => {
         { provide: getRepositoryToken(MenuCategory), useFactory: categoryRepoMock },
         { provide: getRepositoryToken(Product), useValue: productRepo },
         { provide: getRepositoryToken(ModifierGroup), useFactory: modifierGroupRepoMock },
+        {
+          provide: KitchenGateway,
+          useValue: { emitMenuAvailabilityChanged: jest.fn() },
+        },
       ],
     }).compile();
 

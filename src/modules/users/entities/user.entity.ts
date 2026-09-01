@@ -55,6 +55,17 @@ export class User {
   @Exclude()
   refreshToken: string | null;
 
+  // Holds the immediately-superseded refresh token hash for a short grace window after
+  // rotation, so a second request racing on the same pre-rotation cookie (e.g. two tabs
+  // refreshing at once) isn't mistaken for reuse of a stolen token. See auth.service.ts.
+  @Column({ nullable: true, type: 'text' })
+  @Exclude()
+  previousRefreshToken: string | null;
+
+  @Column({ nullable: true, type: 'timestamp' })
+  @Exclude()
+  refreshTokenRotatedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

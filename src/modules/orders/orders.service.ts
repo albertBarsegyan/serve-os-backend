@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -40,11 +41,15 @@ import {
 } from '@common/enums/payment.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
 import { ProviderRegistryService } from '@modules/payments/providers/provider-registry.service';
+import { recomputeOrderTipAmount } from '@modules/payments/utils/recompute-tip-amount.util';
+import { STAFF_TIP_LOG_THRESHOLD_MAJOR_UNITS } from '@common/constants/tip.constants';
 
 const SYSTEM_ACTOR: ActorInfo = { type: 'system', id: 'system' };
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
@@ -450,14 +455,18 @@ export class OrdersService {
         method: dto.method,
         status: PaymentStatus.CONFIRMED,
         amount: dto.amount,
+        tipAmount: dto.tipAmount ?? 0,
         confirmedAt: new Date(),
         confirmedById: staffId,
       }),
     );
 
-    if (dto.tipAmount) {
-      order.tipAmount = Number(dto.tipAmount);
-      await this.orderRepository.save(order);
+    order.tipAmount = await recomputeOrderTipAmount(this.dataSource.manager, order.id);
+    if (dto.tipAmount && dto.tipAmount >= STAFF_TIP_LOG_THRESHOLD_MAJOR_UNITS) {
+      this.logger.warn(
+        { orderId: order.id, staffId, tipAmount: dto.tipAmount },
+        'Staff recorded a tip above the soft threshold',
+      );
     }
 
     return this.recomputeAndAdvance(order);
@@ -578,12 +587,14 @@ export class OrdersService {
     actor?: ActorInfo,
   ): Promise<Order> {
     const order = await this.findOne(businessId, id);
+    const effectiveRole: StaffRole | 'owner' | null | undefined =
+      actor?.type === 'owner' ? 'owner' : actorRole;
 
     if (dto.status === OrderStatus.CANCELLED) {
-      this.orderTransitionService.assertCancellationPermission(actorRole, order.status);
+      this.orderTransitionService.assertCancellationPermission(effectiveRole, order.status);
     }
 
-    this.orderTransitionService.assertKitchenTransitionPermission(actorRole, dto.status);
+    this.orderTransitionService.assertKitchenTransitionPermission(effectiveRole, dto.status);
 
     return this.transitionOrder(order, dto.status, actor);
   }
@@ -652,8 +663,13 @@ export class OrdersService {
 
     if (dto.method) payment.method = dto.method;
     if (dto.tipAmount) {
-      order.tipAmount = Number(dto.tipAmount);
-      await this.orderRepository.save(order);
+      payment.tipAmount = Number(dto.tipAmount);
+      if (dto.tipAmount >= STAFF_TIP_LOG_THRESHOLD_MAJOR_UNITS) {
+        this.logger.warn(
+          { orderId: order.id, staffId, tipAmount: dto.tipAmount },
+          'Staff recorded a tip above the soft threshold',
+        );
+      }
     }
 
     return this.closeWithPayment(order, payment, staffId);
@@ -671,6 +687,29 @@ export class OrdersService {
     this.kitchenGateway.emitPaymentFailed(failed, reason);
 
     return failed;
+  }
+
+  /**
+   * Staff-initiated retry after a failed payment (webhook FAILED / reconcile FAILED) — returns
+   * the order to DELIVERED so the cashier payment queue reopens (transitionOrder's DELIVERED
+   * side effect calls openPaymentForCashier, which creates a fresh PENDING payment and emits
+   * order:payment-open) rather than forcing staff to cancel the whole order over a single failed
+   * charge attempt. Only reachable for DINE_IN — OrderTransitionService's transition graph has
+   * no PAYMENT_FAILED entry for TAKEAWAY/DELIVERY, so assertTransition rejects those with a
+   * BadRequestException before anything here runs.
+   */
+  async retryPayment(businessId: string, orderId: string): Promise<Order> {
+    const order = await this.findOne(businessId, orderId);
+    if (order.status !== OrderStatus.PAYMENT_FAILED) {
+      throw new BadRequestException(
+        `Order must be PAYMENT_FAILED to retry payment (current: ${order.status})`,
+      );
+    }
+
+    order.paymentStatus = OrderPaymentStatus.UNPAID;
+    await this.orderRepository.save(order);
+
+    return this.transitionOrder(order, OrderStatus.DELIVERED);
   }
 
   /**
@@ -727,12 +766,19 @@ export class OrdersService {
         method,
         status: PaymentStatus.CONFIRMED,
         amount: Number(order.totalAmount) + Number(dto.tipAmount ?? 0),
+        tipAmount: dto.tipAmount ?? 0,
         confirmedAt: new Date(),
         confirmedById: null, // Will be set by staff when staff authentication is fully integrated
       }),
     );
 
-    order.tipAmount = Number(dto.tipAmount ?? 0);
+    order.tipAmount = await recomputeOrderTipAmount(this.dataSource.manager, order.id);
+    if (dto.tipAmount && dto.tipAmount >= STAFF_TIP_LOG_THRESHOLD_MAJOR_UNITS) {
+      this.logger.warn(
+        { orderId: order.id, tipAmount: dto.tipAmount },
+        'Staff recorded a tip above the soft threshold',
+      );
+    }
     order.paymentStatus = OrderPaymentStatus.PAID;
     // Must persist before transitionOrder, which now re-fetches+locks its own copy of the
     // row rather than saving this in-memory object — an unsaved mutation here would be lost.
@@ -890,6 +936,7 @@ export class OrdersService {
     payment.confirmedById = staffId;
     await this.paymentRepository.save(payment);
 
+    order.tipAmount = await recomputeOrderTipAmount(this.dataSource.manager, order.id);
     order.paymentStatus = OrderPaymentStatus.PAID;
     await this.orderRepository.save(order);
 

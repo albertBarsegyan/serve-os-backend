@@ -7,6 +7,7 @@ import { ModifierGroup } from '@modules/modifiers/entities/modifier-group.entity
 import { CreateCategoryDto, CreateProductDto, UpdateCategoryDto } from './dto/menu.dto';
 import slugify from 'slugify';
 import { Business } from '@modules/business/entities/business.entity';
+import { KitchenGateway } from '@modules/kitchen/kitchen.gateway';
 
 @Injectable()
 export class MenuService {
@@ -17,6 +18,7 @@ export class MenuService {
     private readonly productRepository: Repository<Product>,
     @InjectRepository(ModifierGroup)
     private readonly modifierGroupRepository: Repository<ModifierGroup>,
+    private readonly kitchenGateway: KitchenGateway,
   ) {}
 
   async createCategory(businessId: string, dto: CreateCategoryDto): Promise<MenuCategory> {
@@ -184,6 +186,7 @@ export class MenuService {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
     await this.productRepository.update({ id, businessId }, { isAvailable });
+    this.kitchenGateway.emitMenuAvailabilityChanged(businessId, id, isAvailable);
     return this.findProduct(businessId, id);
   }
 

@@ -3,6 +3,7 @@ import { StaffRole } from '@common/enums/staff-role.enum';
 import { BusinessFeature } from '@common/enums/business-feature.enum';
 import { AuthPayload } from '@modules/auth/types/auth-payload.type';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
+import { Order } from '@modules/orders/entities/order.entity';
 
 export interface TenantBusinessContext {
   id: string;
@@ -26,4 +27,7 @@ export interface AuthenticatedRequest extends Request {
 
   /** Populated by GuestSessionGuard for routes that accept a guest session token. */
   tableSession?: TableSession | null;
+
+  /** Populated by TableSessionGuard — the session's most-recently-updated order. */
+  order?: Order | null;
 }

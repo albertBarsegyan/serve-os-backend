@@ -48,6 +48,16 @@ export enum CallbackMode {
 }
 
 /**
+ * Who initiated a tip write on a Payment record — used for audit purposes.
+ * GUEST goes through the session-token-gated tip endpoint; STAFF goes through
+ * the staff-only payment endpoints in OrdersService.
+ */
+export enum TipSource {
+  GUEST = 'guest',
+  STAFF = 'staff',
+}
+
+/**
  * Typed shape of BusinessPaymentMethod.config (stored as jsonb).
  * Each payment method entry carries its provider name, capture timing,
  * and optional provider-specific fields.
