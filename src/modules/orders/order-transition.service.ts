@@ -82,7 +82,10 @@ export class OrderTransitionService {
     }
   }
 
-  assertKitchenTransitionPermission(role: StaffRole | null | undefined, next: OrderStatus): void {
+  assertKitchenTransitionPermission(
+    role: StaffRole | 'owner' | null | undefined,
+    next: OrderStatus,
+  ): void {
     if (role !== StaffRole.KITCHEN) return;
 
     const allowed: OrderStatus[] = [
@@ -97,7 +100,10 @@ export class OrderTransitionService {
     }
   }
 
-  assertCancellationPermission(role: StaffRole | null | undefined, current: OrderStatus): void {
+  assertCancellationPermission(
+    role: StaffRole | 'owner' | null | undefined,
+    current: OrderStatus,
+  ): void {
     if (current === OrderStatus.CLOSED || current === OrderStatus.REFUNDED) {
       throw new ForbiddenException('Closed or refunded orders cannot be cancelled');
     }
@@ -106,7 +112,7 @@ export class OrderTransitionService {
       throw new ForbiddenException('Staff role is required to cancel order');
     }
 
-    if (role === StaffRole.MANAGER) {
+    if (role === 'owner' || role === StaffRole.MANAGER) {
       return;
     }
 

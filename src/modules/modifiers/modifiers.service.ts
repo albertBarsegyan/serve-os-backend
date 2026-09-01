@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, IsNull } from 'typeorm';
 import { ModifierGroup } from './entities/modifier-group.entity';
@@ -6,6 +6,22 @@ import { Modifier } from './entities/modifier.entity';
 import { CreateModifierGroupDto, UpdateModifierGroupDto } from './dto/modifier-group.dto';
 import { CreateModifierItemDto } from './dto/create-modifier.dto';
 import { ModifierSelectionType } from '@common/enums/modifier.enum';
+
+/**
+ * A fixed price replaces the product's base price, so it only makes sense when a group
+ * allows selecting exactly one modifier. In a MULTIPLE selection group, more than one
+ * fixed-price modifier could be selected at once with no defined way to combine them.
+ */
+function assertFixedPriceAllowed(
+  selectionType: ModifierSelectionType,
+  hasFixedPriceModifier: boolean,
+): void {
+  if (selectionType === ModifierSelectionType.MULTIPLE && hasFixedPriceModifier) {
+    throw new BadRequestException(
+      'Fixed-price modifiers are only allowed in single-selection modifier groups',
+    );
+  }
+}
 
 @Injectable()
 export class ModifiersService {
@@ -29,11 +45,17 @@ export class ModifiersService {
     await queryRunner.startTransaction();
 
     try {
+      const selectionType = dto.selectionType || ModifierSelectionType.SINGLE;
+      assertFixedPriceAllowed(
+        selectionType,
+        (dto.modifiers ?? []).some((modifierDto) => modifierDto.priceType === 'fixed'),
+      );
+
       // Create the modifier group
       const modifierGroup = this.modifierGroupRepository.create({
         businessId,
         name: dto.name,
-        selectionType: dto.selectionType || ModifierSelectionType.SINGLE,
+        selectionType,
         isRequired: dto.isRequired ?? false,
         minSelections: dto.minSelections ?? 1,
         maxSelections: dto.maxSelections,
@@ -121,6 +143,13 @@ export class ModifiersService {
         throw new NotFoundException(`Modifier group ${groupId} not found`);
       }
 
+      const effectiveSelectionType = dto.selectionType ?? group.selectionType;
+      const willHaveFixedPriceModifier =
+        dto.modifiers !== undefined
+          ? dto.modifiers.some((modifierDto) => modifierDto.priceType === 'fixed')
+          : await queryRunner.manager.exists(Modifier, { where: { groupId, priceType: 'fixed' } });
+      assertFixedPriceAllowed(effectiveSelectionType, willHaveFixedPriceModifier);
+
       // Update group fields
       if (dto.name !== undefined) group.name = dto.name;
       if (dto.selectionType !== undefined) group.selectionType = dto.selectionType;
@@ -203,6 +232,8 @@ export class ModifiersService {
       throw new NotFoundException(`Modifier group ${groupId} not found`);
     }
 
+    assertFixedPriceAllowed(group.selectionType, dto.priceType === 'fixed');
+
     // Get the next position
     const maxPosition = await this.modifierRepository
       .createQueryBuilder('m')
@@ -249,6 +280,9 @@ export class ModifiersService {
     if (!modifier) {
       throw new NotFoundException(`Modifier ${modifierId} not found in group ${groupId}`);
     }
+
+    const effectivePriceType = dto.priceType ?? modifier.priceType;
+    assertFixedPriceAllowed(group.selectionType, effectivePriceType === 'fixed');
 
     if (dto.name !== undefined) modifier.name = dto.name;
     if (dto.priceAdjustment !== undefined) modifier.priceAdjustment = dto.priceAdjustment;

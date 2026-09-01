@@ -11,6 +11,7 @@ import { ModifierGroup } from '@modules/modifiers/entities/modifier-group.entity
 import { Modifier } from '@modules/modifiers/entities/modifier.entity';
 import { OrderItemModifier } from '@modules/modifiers/entities/order-item-modifier.entity';
 import { TenantAccessService } from '@common/guards/tenant-access.service';
+import { KitchenModule } from '@modules/kitchen/kitchen.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { TenantAccessService } from '@common/guards/tenant-access.service';
       Business,
       Staff,
     ]),
+    KitchenModule,
   ],
   controllers: [MenuController],
   providers: [TenantAccessService, MenuService],

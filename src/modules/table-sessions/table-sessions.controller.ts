@@ -11,7 +11,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { ConfigService } from '@nestjs/config';
 import * as express from 'express';
@@ -19,16 +19,23 @@ import { Public } from '@common/decorators/public.decorator';
 import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.decorator';
 import { TableSessionsService } from './table-sessions.service';
 import { ScanSessionDto } from './dto/scan-session.dto';
+import { CreateTipDto, TipResponseDto } from './dto/create-tip.dto';
 import { TenantGuard } from '@common/guards/tenant.guard';
+import { TableSessionGuard } from '@common/guards/table-session.guard';
+import { TipRateLimitGuard } from '@common/guards/tip-rate-limit.guard';
+import { FeatureGuard } from '@common/guards/feature.guard';
 import { Tenant } from '@common/decorators/tenant.decorator';
 import type { AuthenticatedRequest } from '@common/types/authenticated-request.type';
 import { Roles } from '@common/decorators/roles.decorator';
 import { Role } from '@common/enums/role.enum';
 import { StaffRole } from '@common/enums/staff-role.enum';
+import { RequireBusinessFeature } from '@common/decorators/require-feature.decorator';
+import { BusinessFeature } from '@common/enums/business-feature.enum';
 import { setBusinessCookie } from '@common/utils/business.utils';
 
 const SESSION_COOKIE_MAX_AGE = 28800 * 1000; // 8 hours in ms
 const SESSION_THROTTLE = { default: { limit: 20, ttl: 60000 } };
+const TIP_THROTTLE = { default: { limit: 10, ttl: 60000 } };
 
 @ApiTags('Table Sessions')
 @Controller('sessions')
@@ -94,6 +101,31 @@ export class TableSessionsController {
       throw new NotFoundException('No session token provided');
     }
     return this.tableSessionsService.resumeByToken(token);
+  }
+
+  /**
+   * Guest self-service tip. The path's :sessionToken is the auth capability — TableSessionGuard
+   * validates it, asserts the session is open, and resolves req.businessId + req.order (the
+   * session's most-recently-updated order). @Public() only disables JWT auth; TableSessionGuard
+   * is the actual authorization here.
+   */
+  @Public()
+  @AllowWithoutBusiness()
+  @UseGuards(TableSessionGuard, FeatureGuard, ThrottlerGuard, TipRateLimitGuard)
+  @RequireBusinessFeature([BusinessFeature.TIPS])
+  @Throttle(TIP_THROTTLE)
+  @Post(':sessionToken/tip')
+  @ApiParam({ name: 'sessionToken', description: 'The guest session token (path, not body)' })
+  @ApiOperation({ summary: 'Guest adds a tip to their session order' })
+  @ApiResponse({ status: 201, description: 'Tip recorded', type: TipResponseDto })
+  @ApiResponse({ status: 403, description: 'Session does not own this order, or TIPS disabled' })
+  @ApiResponse({ status: 409, description: 'Order is no longer eligible for a tip' })
+  createTip(
+    @Param('sessionToken') _sessionToken: string,
+    @Body() dto: CreateTipDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<TipResponseDto> {
+    return this.tableSessionsService.createTip(req.tableSession!, req.order!, dto);
   }
 
   private setSessionCookies(res: express.Response, sessionToken: string, businessId: string) {

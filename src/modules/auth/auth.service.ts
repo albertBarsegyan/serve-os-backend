@@ -28,6 +28,10 @@ import { StaffPermission, ROLE_PERMISSION_MAP } from '@common/enums/staff-permis
 import { BusinessFeature } from '@common/enums/business-feature.enum';
 
 const EMAIL_VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+// How long a just-rotated-out refresh token is still accepted. Covers benign multi-tab
+// races (two tabs both refresh on the same pre-rotation cookie around access-token expiry)
+// without weakening reuse detection for a token that's actually been stolen and replayed later.
+const REFRESH_TOKEN_GRACE_WINDOW_MS = 30 * 1000;
 
 export interface TokenPair {
   accessToken: string;
@@ -110,7 +114,10 @@ export class AuthService {
   /**
    * Generate JWT token pair for an owner (user).
    */
-  private async generateTokensForOwner(user: User): Promise<TokenPair> {
+  private async generateTokensForOwner(
+    user: User,
+    options: { rotating?: boolean } = {},
+  ): Promise<TokenPair> {
     const payload: OwnerPayload = {
       type: 'owner',
       userId: user.id,
@@ -130,7 +137,25 @@ export class AuthService {
     ]);
 
     const hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
-    await this.userRepository.update(user.id, { refreshToken: hashedRefreshToken });
+
+    // On refresh-triggered rotation, keep the token being replaced around as
+    // `previousRefreshToken` for the grace window (see refreshTokens()). A fresh
+    // login/register instead clears it outright — there's no in-flight request
+    // racing on the old token in that case.
+    await this.userRepository.update(
+      user.id,
+      options.rotating
+        ? {
+            previousRefreshToken: user.refreshToken,
+            refreshTokenRotatedAt: new Date(),
+            refreshToken: hashedRefreshToken,
+          }
+        : {
+            refreshToken: hashedRefreshToken,
+            previousRefreshToken: null,
+            refreshTokenRotatedAt: null,
+          },
+    );
 
     return { accessToken, refreshToken };
   }
@@ -447,11 +472,29 @@ export class AuthService {
       throw new UnauthorizedException('No valid refresh token');
     }
 
-    const tokenMatches = await bcrypt.compare(incomingRefreshToken, user.refreshToken);
-    if (!tokenMatches) {
-      // Token mismatch — could be a reuse attempt after rotation.
-      // Invalidate all sessions defensively by clearing the stored token.
-      await this.userRepository.update(userId, { refreshToken: null });
+    const matchesCurrent = await bcrypt.compare(incomingRefreshToken, user.refreshToken);
+
+    // A token that just lost a rotation race is still accepted for a short grace
+    // window — otherwise a second tab refreshing on the same pre-rotation cookie
+    // (both fire around the same access-token expiry) reads as token reuse and
+    // kills a perfectly legitimate session.
+    const withinGraceWindow =
+      !!user.previousRefreshToken &&
+      !!user.refreshTokenRotatedAt &&
+      Date.now() - user.refreshTokenRotatedAt.getTime() < REFRESH_TOKEN_GRACE_WINDOW_MS;
+    const matchesPrevious =
+      !matchesCurrent && withinGraceWindow
+        ? await bcrypt.compare(incomingRefreshToken, user.previousRefreshToken as string)
+        : false;
+
+    if (!matchesCurrent && !matchesPrevious) {
+      // Mismatch outside any grace window — a genuine reuse attempt (e.g. a stolen,
+      // already-rotated token replayed later). Invalidate all sessions defensively.
+      await this.userRepository.update(userId, {
+        refreshToken: null,
+        previousRefreshToken: null,
+        refreshTokenRotatedAt: null,
+      });
       this.logger.warn(
         { userId },
         'Refresh token mismatch — possible reuse attack, sessions cleared',
@@ -459,8 +502,9 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    // generateTokensForOwner atomically replaces the stored hash with the new token
-    const tokens = await this.generateTokensForOwner(user);
+    // generateTokensForOwner atomically rotates: the current hash moves to
+    // previousRefreshToken (kept for the grace window) and the new hash takes its place.
+    const tokens = await this.generateTokensForOwner(user, { rotating: true });
 
     this.logger.debug({ userId: user.id }, 'Tokens refreshed');
 
@@ -471,7 +515,11 @@ export class AuthService {
   }
 
   async logout(userId: string): Promise<void> {
-    await this.userRepository.update(userId, { refreshToken: null });
+    await this.userRepository.update(userId, {
+      refreshToken: null,
+      previousRefreshToken: null,
+      refreshTokenRotatedAt: null,
+    });
     this.logger.info({ userId }, 'User logged out');
   }
 

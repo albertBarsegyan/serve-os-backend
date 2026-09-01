@@ -14,7 +14,7 @@ describe('KitchenGateway.handleJoinSession', () => {
   let gateway: KitchenGateway;
   let tableSessionRepo: ReturnType<typeof mockRepo>;
   let joinedRooms: string[];
-  let client: { id: string; join: jest.Mock; emit: jest.Mock };
+  let client: { id: string; join: jest.Mock; emit: jest.Mock; leave: jest.Mock };
 
   beforeEach(() => {
     tableSessionRepo = mockRepo();
@@ -26,6 +26,7 @@ describe('KitchenGateway.handleJoinSession', () => {
         return Promise.resolve();
       }),
       emit: jest.fn(),
+      leave: jest.fn().mockResolvedValue(undefined),
     };
 
     gateway = new KitchenGateway(
@@ -158,6 +159,30 @@ describe('KitchenGateway.handleJoinSession', () => {
       expect.objectContaining({ orderId: 'order-new' }),
     );
   });
+
+  it.each([undefined, null, 42, {}, [], ''])(
+    'rejects a malformed join-session payload (%p) without touching the repository',
+    async (malformed) => {
+      const result = await gateway.handleJoinSession(client as never, malformed);
+
+      expect(result).toEqual({ event: 'error', data: 'Invalid payload' });
+      expect(tableSessionRepo.findOne).not.toHaveBeenCalled();
+      expect(client.join).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects an oversized join-session payload without touching the repository', async () => {
+    const result = await gateway.handleJoinSession(client as never, 'a'.repeat(513));
+
+    expect(result).toEqual({ event: 'error', data: 'Invalid payload' });
+    expect(tableSessionRepo.findOne).not.toHaveBeenCalled();
+  });
+
+  it('silently ignores a malformed leave-session payload', async () => {
+    await gateway.handleLeaveSession(client as never, {});
+
+    expect(client.leave).not.toHaveBeenCalled();
+  });
 });
 
 describe('KitchenGateway.handleCallWaiter', () => {
@@ -211,6 +236,61 @@ describe('KitchenGateway.handleCallWaiter', () => {
       expect.objectContaining({ room: 'business:biz-1', event: 'order:call-waiter' }),
     );
   });
+
+  it('rate-limits a second call-waiter for the same session within the cooldown window', async () => {
+    tableSessionRepo.findOne.mockResolvedValue({ businessId: 'biz-1', tableId: 'table-1' });
+
+    await gateway.handleCallWaiter({ sessionToken: 'valid-token' });
+    await gateway.handleCallWaiter({ sessionToken: 'valid-token' });
+
+    expect(tableSessionRepo.findOne).toHaveBeenCalledTimes(1);
+    expect(emitted.filter((e) => e.event === 'order:call-waiter')).toHaveLength(1);
+  });
+
+  it('consumes the cooldown slot even for a token that resolves to no active session', async () => {
+    tableSessionRepo.findOne.mockResolvedValue(null);
+
+    await gateway.handleCallWaiter({ sessionToken: 'stale-token' });
+    await gateway.handleCallWaiter({ sessionToken: 'stale-token' });
+
+    // Second call is rejected by the cooldown before ever touching the repository again.
+    expect(tableSessionRepo.findOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows a call-waiter again once the cooldown window has elapsed', async () => {
+    jest.useFakeTimers();
+    tableSessionRepo.findOne.mockResolvedValue({ businessId: 'biz-1', tableId: 'table-1' });
+
+    await gateway.handleCallWaiter({ sessionToken: 'valid-token' });
+    jest.advanceTimersByTime(5001);
+    await gateway.handleCallWaiter({ sessionToken: 'valid-token' });
+
+    expect(tableSessionRepo.findOne).toHaveBeenCalledTimes(2);
+    expect(emitted.filter((e) => e.event === 'order:call-waiter')).toHaveLength(2);
+
+    jest.useRealTimers();
+  });
+
+  it('does not rate-limit two different sessions calling at the same time', async () => {
+    tableSessionRepo.findOne.mockImplementation(({ where }: { where: { sessionToken: string } }) =>
+      Promise.resolve({ businessId: 'biz-1', tableId: `table-${where.sessionToken}` }),
+    );
+
+    await gateway.handleCallWaiter({ sessionToken: 'token-a' });
+    await gateway.handleCallWaiter({ sessionToken: 'token-b' });
+
+    expect(emitted.filter((e) => e.event === 'order:call-waiter')).toHaveLength(2);
+  });
+
+  it.each([undefined, null, 'a-bare-string', 42, {}, { sessionToken: 42 }, { sessionToken: '' }])(
+    'rejects a malformed call-waiter payload (%p) without touching the repository',
+    async (malformed) => {
+      await gateway.handleCallWaiter(malformed);
+
+      expect(tableSessionRepo.findOne).not.toHaveBeenCalled();
+      expect(server.to).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('KitchenGateway payment-failed / refunded emits', () => {
@@ -325,7 +405,7 @@ describe('KitchenGateway payment-failed / refunded emits', () => {
     gateway.emitOrderServed(order as never);
 
     const rooms = emitted.map((e) => e.room);
-    expect(rooms).toEqual(['business:biz-1', 'display:biz-1']);
+    expect(rooms).toEqual(['business:biz-1', 'kitchen:biz-1', 'display:biz-1']);
   });
 
   it('emitPaymentOpen broadcasts to the session room, not just business', () => {
@@ -486,6 +566,74 @@ describe('KitchenGateway.handleJoinDisplay', () => {
     expect(result).toEqual({ event: 'joined', data: 'biz-1' });
     expect(client.join).toHaveBeenCalledWith('display:biz-1');
     expect(client.disconnect).not.toHaveBeenCalled();
+  });
+});
+
+describe('KitchenGateway.handleJoinMenu / handleLeaveMenu / emitMenuAvailabilityChanged', () => {
+  let gateway: KitchenGateway;
+  let server: { to: jest.Mock };
+  let emitted: { room: string; event: string; payload: unknown }[];
+  let client: { id: string; join: jest.Mock; leave: jest.Mock };
+
+  beforeEach(() => {
+    emitted = [];
+    server = {
+      to: jest.fn((room: string) => ({
+        emit: jest.fn((event: string, payload: unknown) => {
+          emitted.push({ room, event, payload });
+        }),
+      })),
+    };
+    client = {
+      id: 'socket-1',
+      join: jest.fn().mockResolvedValue(undefined),
+      leave: jest.fn().mockResolvedValue(undefined),
+    };
+
+    gateway = new KitchenGateway(
+      mockLogger(),
+      {} as never,
+      mockRepo() as never, // tableSessionRepository
+      mockRepo() as never, // businessRepository
+      mockRepo() as never, // staffRepository
+      mockRepo() as never, // displayRepository
+    );
+    gateway.server = server as never;
+  });
+
+  it('joins the menu room for a well-formed businessId with no auth required', async () => {
+    const result = await gateway.handleJoinMenu(client as never, 'biz-1');
+
+    expect(result).toEqual({ event: 'joined', data: 'biz-1' });
+    expect(client.join).toHaveBeenCalledWith('menu:biz-1');
+  });
+
+  it('rejects a malformed join-menu payload', async () => {
+    const result = await gateway.handleJoinMenu(client as never, { not: 'a string' });
+
+    expect(result).toEqual({ event: 'error', data: 'Invalid payload' });
+    expect(client.join).not.toHaveBeenCalled();
+  });
+
+  it('leaves the menu room', async () => {
+    await gateway.handleLeaveMenu(client as never, 'biz-1');
+
+    expect(client.leave).toHaveBeenCalledWith('menu:biz-1');
+  });
+
+  it('emitMenuAvailabilityChanged broadcasts to both the business and menu rooms', () => {
+    gateway.emitMenuAvailabilityChanged('biz-1', 'prod-1', false);
+
+    expect(emitted).toContainEqual({
+      room: 'business:biz-1',
+      event: 'menu:availability-changed',
+      payload: { businessId: 'biz-1', productId: 'prod-1', isAvailable: false },
+    });
+    expect(emitted).toContainEqual({
+      room: 'menu:biz-1',
+      event: 'menu:availability-changed',
+      payload: { businessId: 'biz-1', productId: 'prod-1', isAvailable: false },
+    });
   });
 });
 

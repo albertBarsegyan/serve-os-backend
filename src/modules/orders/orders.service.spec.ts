@@ -242,6 +242,88 @@ describe('OrdersService.markPaymentFailed / refundOrder', () => {
   });
 });
 
+describe('OrdersService.retryPayment', () => {
+  let service: OrdersService;
+  let orderRepo: ReturnType<typeof mockRepo>;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  let kitchenGateway: { emitOrderServed: jest.Mock; emitPaymentOpen: jest.Mock };
+  let dataSource: { query: jest.Mock; createQueryRunner: jest.Mock };
+
+  beforeEach(() => {
+    orderRepo = mockRepo();
+    businessRepo = mockRepo();
+    kitchenGateway = { emitOrderServed: jest.fn(), emitPaymentOpen: jest.fn() };
+
+    const tableSessionsService = { refreshLifecycle: jest.fn() };
+    dataSource = { query: jest.fn().mockResolvedValue(undefined), createQueryRunner: jest.fn() };
+
+    service = new OrdersService(
+      orderRepo as never,
+      mockRepo() as never, // orderItemRepository
+      mockRepo() as never, // productRepository
+      businessRepo as never,
+      mockRepo() as never, // paymentRepository
+      mockRepo() as never, // staffRepository
+      dataSource as never,
+      kitchenGateway as never,
+      tableSessionsService as never,
+      new OrderTransitionService(),
+      {} as never, // providerRegistry
+    );
+  });
+
+  it('retryPayment returns a PAYMENT_FAILED DINE_IN order to DELIVERED and resets paymentStatus', async () => {
+    const order = {
+      id: 'order-5',
+      businessId: 'biz-1',
+      type: OrderType.DINE_IN,
+      status: OrderStatus.PAYMENT_FAILED,
+      tableSessionId: null,
+      paymentStatus: OrderPaymentStatus.FAILED,
+    };
+    orderRepo.findOne.mockResolvedValue(order);
+    dataSource.createQueryRunner.mockReturnValue(mockQueryRunner(order));
+
+    const result = await service.retryPayment('biz-1', 'order-5');
+
+    expect(result.status).toBe(OrderStatus.DELIVERED);
+    expect(kitchenGateway.emitOrderServed).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'order-5', status: OrderStatus.DELIVERED }),
+    );
+  });
+
+  it('retryPayment rejects an order that is not PAYMENT_FAILED', async () => {
+    const order = {
+      id: 'order-6',
+      businessId: 'biz-1',
+      type: OrderType.DINE_IN,
+      status: OrderStatus.DELIVERED,
+      tableSessionId: null,
+      paymentStatus: OrderPaymentStatus.UNPAID,
+    };
+    orderRepo.findOne.mockResolvedValue(order);
+
+    await expect(service.retryPayment('biz-1', 'order-6')).rejects.toThrow();
+    expect(kitchenGateway.emitOrderServed).not.toHaveBeenCalled();
+  });
+
+  it('retryPayment rejects a TAKEAWAY order (graph has no PAYMENT_FAILED transition for it)', async () => {
+    const order = {
+      id: 'order-7',
+      businessId: 'biz-1',
+      type: OrderType.TAKEAWAY,
+      status: OrderStatus.PAYMENT_FAILED,
+      tableSessionId: null,
+      paymentStatus: OrderPaymentStatus.FAILED,
+    };
+    orderRepo.findOne.mockResolvedValue(order);
+    dataSource.createQueryRunner.mockReturnValue(mockQueryRunner(order));
+
+    await expect(service.retryPayment('biz-1', 'order-7')).rejects.toThrow();
+    expect(kitchenGateway.emitOrderServed).not.toHaveBeenCalled();
+  });
+});
+
 describe('OrdersService.confirmOrder', () => {
   let service: OrdersService;
   let orderRepo: ReturnType<typeof mockRepo>;

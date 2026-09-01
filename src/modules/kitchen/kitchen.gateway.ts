@@ -10,14 +10,13 @@ import {
 import { Server, Socket } from 'socket.io';
 import { PinoLogger } from 'nestjs-pino';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { Order } from '@modules/orders/entities/order.entity';
 import { TableSession } from '@modules/table-sessions/table-session.entity';
 import { Business } from '@modules/business/entities/business.entity';
 import { Staff } from '@modules/staff/entities/staff.entity';
 import { Display } from '@modules/display/entities/display.entity';
-import { IsNull } from 'typeorm';
 import { OrderStatus } from '@modules/orders/entities/order-status.enum';
 import { CustomerOrderStatus, toCustomerStatus } from '@modules/orders/customer-order-status';
 import { hashDisplayToken } from '@modules/display/utils/display-token.util';
@@ -26,6 +25,7 @@ import {
   DisplayOrderPayload,
 } from '@modules/display/utils/display-order.util';
 import type { AuthPayload } from '@modules/auth/types/auth-payload.type';
+import { ROLE_PERMISSION_MAP, StaffPermission } from '@common/enums/staff-permission.enum';
 
 interface AuthResult {
   payload: AuthPayload;
@@ -54,6 +54,7 @@ export interface CallWaiterPayload {
   businessId: string;
   tableId: string | null;
   sessionToken: string;
+  tableNumber: number | null;
   at: string;
 }
 
@@ -80,6 +81,15 @@ export interface OrderStatusChangedPayload {
   sessionToken: string | null;
   updatedAt: string;
   actor: ActorInfo;
+  tipAmount: number;
+}
+
+/** business:<id> only — staff dashboards, not the kitchen display. */
+export interface OrderTipUpdatedPayload {
+  orderId: string;
+  businessId: string;
+  tipAmount: number;
+  updatedAt: string;
 }
 
 export interface SessionClosedPayload {
@@ -100,6 +110,18 @@ export interface OrderPendingConfirmationPayload {
     quantity: number;
     unitPrice: number;
   }>;
+}
+
+/**
+ * A guest's open menu page has no way to learn an item just went out of stock mid-session
+ * (TanStack Query's 5-min staleTime otherwise leaves it orderable in their browser for up to
+ * that long) — this is a lightweight signal, not a full product payload, so the client just
+ * refetches the public menu rather than trying to patch a single item in its cache.
+ */
+export interface MenuAvailabilityChangedPayload {
+  businessId: string;
+  productId: string;
+  isAvailable: boolean;
 }
 
 @WebSocketGateway({
@@ -123,6 +145,20 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * cleared on disconnect (handleDisconnect) so it never leaks.
    */
   private readonly expiryTimers = new Map<string, NodeJS.Timeout>();
+
+  /**
+   * call-waiter has no JWT/cookie auth (a guest's sessionToken is the only credential, same
+   * as join-session) and, unlike every REST endpoint in this codebase, nothing at the gateway
+   * level runs a ThrottlerGuard — so without this, a raw socket client that knows (or
+   * brute-forces) an active sessionToken could spam-broadcast to the business room with no
+   * server-side limit; the frontend's 5s button cooldown only constrains the shipped UI, not
+   * a hostile client. Keyed by sessionToken (the guest's actual identity) rather than socket
+   * id, so the cooldown survives a reconnect. Swept opportunistically so it never grows
+   * unbounded over a long-running server.
+   */
+  private readonly callWaiterCooldowns = new Map<string, number>();
+  private static readonly CALL_WAITER_COOLDOWN_MS = 5000;
+  private static readonly CALL_WAITER_COOLDOWN_SWEEP_THRESHOLD = 500;
 
   constructor(
     private readonly logger: PinoLogger,
@@ -151,9 +187,16 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   }
 
   @SubscribeMessage('join-kitchen')
-  async handleJoinKitchen(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
+  async handleJoinKitchen(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
+    if (!this.isValidRoomKey(body)) return { event: 'error', data: 'Invalid payload' };
+    const businessId = body;
+
     const auth = await this.authenticate(client);
-    if (!auth || !(await this.canAccessBusiness(auth.payload, businessId))) {
+    if (
+      !auth ||
+      !(await this.canAccessBusiness(auth.payload, businessId)) ||
+      !this.hasPermission(auth.payload, StaffPermission.KITCHEN_VIEW)
+    ) {
       this.logger.warn({ clientId: client.id, businessId }, 'Rejected unauthorized join-kitchen');
       return { event: 'error', data: 'Unauthorized' };
     }
@@ -165,9 +208,16 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   }
 
   @SubscribeMessage('join-business')
-  async handleJoinBusiness(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
+  async handleJoinBusiness(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
+    if (!this.isValidRoomKey(body)) return { event: 'error', data: 'Invalid payload' };
+    const businessId = body;
+
     const auth = await this.authenticate(client);
-    if (!auth || !(await this.canAccessBusiness(auth.payload, businessId))) {
+    if (
+      !auth ||
+      !(await this.canAccessBusiness(auth.payload, businessId)) ||
+      !this.hasPermission(auth.payload, StaffPermission.ORDER_VIEW)
+    ) {
       this.logger.warn({ clientId: client.id, businessId }, 'Rejected unauthorized join-business');
       return { event: 'error', data: 'Unauthorized' };
     }
@@ -185,23 +235,45 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * since it's never explicitly removed until the whole connection drops.
    */
   @SubscribeMessage('leave-kitchen')
-  async handleLeaveKitchen(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
-    await client.leave(`kitchen:${businessId}`);
+  async handleLeaveKitchen(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
+    if (!this.isValidRoomKey(body)) return;
+    await client.leave(`kitchen:${body}`);
   }
 
   @SubscribeMessage('leave-business')
-  async handleLeaveBusiness(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
-    await client.leave(`business:${businessId}`);
+  async handleLeaveBusiness(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
+    if (!this.isValidRoomKey(body)) return;
+    await client.leave(`business:${body}`);
   }
 
   @SubscribeMessage('leave-session')
-  async handleLeaveSession(@ConnectedSocket() client: Socket, @MessageBody() sessionToken: string) {
-    await client.leave(`session:${sessionToken}`);
+  async handleLeaveSession(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
+    if (!this.isValidRoomKey(body)) return;
+    await client.leave(`session:${body}`);
   }
 
   @SubscribeMessage('leave-display')
-  async handleLeaveDisplay(@ConnectedSocket() client: Socket, @MessageBody() businessId: string) {
-    await client.leave(`display:${businessId}`);
+  async handleLeaveDisplay(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
+    if (!this.isValidRoomKey(body)) return;
+    await client.leave(`display:${body}`);
+  }
+
+  /**
+   * No auth beyond a well-formed businessId — the public menu itself is already served
+   * unauthenticated (GET /menu/customer, @Public()), so a live feed of "an item's availability
+   * changed" leaks nothing the guest couldn't already fetch directly.
+   */
+  @SubscribeMessage('join-menu')
+  async handleJoinMenu(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
+    if (!this.isValidRoomKey(body)) return { event: 'error', data: 'Invalid payload' };
+    await client.join(`menu:${body}`);
+    return { event: 'joined', data: body };
+  }
+
+  @SubscribeMessage('leave-menu')
+  async handleLeaveMenu(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
+    if (!this.isValidRoomKey(body)) return;
+    await client.leave(`menu:${body}`);
   }
 
   /**
@@ -211,7 +283,10 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * since there's no human at the keyboard to retry with a fresh one.
    */
   @SubscribeMessage('join-display')
-  async handleJoinDisplay(@ConnectedSocket() client: Socket, @MessageBody() token: string) {
+  async handleJoinDisplay(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
+    if (!this.isValidRoomKey(body)) return { event: 'error', data: 'Invalid payload' };
+    const token = body;
+
     const display = await this.displayRepository.findOne({
       where: { tokenHash: hashDisplayToken(token), revokedAt: IsNull() },
     });
@@ -236,7 +311,10 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * used to listen in on a table's live order feed.
    */
   @SubscribeMessage('join-session')
-  async handleJoinSession(@ConnectedSocket() client: Socket, @MessageBody() sessionToken: string) {
+  async handleJoinSession(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
+    if (!this.isValidRoomKey(body)) return { event: 'error', data: 'Invalid payload' };
+    const sessionToken = body;
+
     const session = await this.tableSessionRepository.findOne({
       where: { sessionToken, isActive: true },
       relations: ['orders', 'orders.table'],
@@ -274,6 +352,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
         sessionToken,
         updatedAt: activeOrder.updatedAt.toISOString(),
         actor: { type: 'system', id: 'system' },
+        tipAmount: Number(activeOrder.tipAmount ?? 0),
       };
       client.emit('order:status-changed', syncPayload);
     }
@@ -282,21 +361,56 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   }
 
   @SubscribeMessage('call-waiter')
-  async handleCallWaiter(@MessageBody() body: { sessionToken: string }): Promise<void> {
+  async handleCallWaiter(@MessageBody() body: unknown): Promise<void> {
+    if (!this.isValidCallWaiterBody(body)) return;
+    const { sessionToken } = body;
+
+    if (this.isCallWaiterOnCooldown(sessionToken)) {
+      this.logger.debug({ sessionToken }, 'Call-waiter rate-limited');
+      return;
+    }
+
     const session = await this.tableSessionRepository.findOne({
-      where: { sessionToken: body.sessionToken, isActive: true },
+      where: { sessionToken, isActive: true },
+      relations: ['table'],
     });
     if (!session) return;
 
     const payload: CallWaiterPayload = {
       businessId: session.businessId,
       tableId: session.tableId,
-      sessionToken: body.sessionToken,
+      tableNumber: session.table?.number ?? null,
+      sessionToken,
       at: new Date().toISOString(),
     };
 
     this.server.to(`business:${session.businessId}`).emit('order:call-waiter', payload);
-    this.logger.debug({ sessionToken: body.sessionToken }, 'Call-waiter broadcast');
+    this.logger.debug({ sessionToken }, 'Call-waiter broadcast');
+  }
+
+  /**
+   * Records the attempt regardless of outcome (even an invalid/stale token consumes its
+   * cooldown slot) so a brute-force loop of guessed tokens can't dodge the limit by varying
+   * the token on every call — only a genuinely valid, distinct sessionToken buys a fresh slot.
+   */
+  private isCallWaiterOnCooldown(sessionToken: string): boolean {
+    const now = Date.now();
+
+    if (this.callWaiterCooldowns.size >= KitchenGateway.CALL_WAITER_COOLDOWN_SWEEP_THRESHOLD) {
+      for (const [token, calledAt] of this.callWaiterCooldowns) {
+        if (now - calledAt >= KitchenGateway.CALL_WAITER_COOLDOWN_MS) {
+          this.callWaiterCooldowns.delete(token);
+        }
+      }
+    }
+
+    const lastCalledAt = this.callWaiterCooldowns.get(sessionToken);
+    if (lastCalledAt !== undefined && now - lastCalledAt < KitchenGateway.CALL_WAITER_COOLDOWN_MS) {
+      return true;
+    }
+
+    this.callWaiterCooldowns.set(sessionToken, now);
+    return false;
   }
 
   /** CREATED → business room (waiter gets an audible new-order alert). */
@@ -321,7 +435,10 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   // ── Typed emit helpers ───────────────────────────────────────────────────────
   // Each emits to exactly the rooms listed in the order-flow spec.
 
-  /** IN_KITCHEN → session (customer alert) + business (waiter progress). */
+  /**
+   * IN_KITCHEN → session (customer alert) + business (waiter progress) + kitchen (a second
+   * KDS screen/tab needs this live too, not just the screen that made the transition).
+   */
   emitOrderPreparing(order: Order): void {
     const payload = this.buildPayload(order, true);
     const token = order.tableSession?.sessionToken;
@@ -329,11 +446,12 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
       this.server.to(`session:${token}`).emit('order:preparing', payload);
     }
     this.server.to(`business:${order.businessId}`).emit('order:preparing', payload);
+    this.server.to(`kitchen:${order.businessId}`).emit('order:preparing', payload);
     this.logger.debug({ orderId: order.id }, 'order:preparing emitted');
     this.emitDisplayUpdate(order);
   }
 
-  /** READY → session (customer alert) + business (waiter notified). */
+  /** READY → session (customer alert) + business (waiter notified) + kitchen (other KDS screens). */
   emitOrderReady(order: Order): void {
     const payload = this.buildPayload(order, true);
     const token = order.tableSession?.sessionToken;
@@ -341,11 +459,15 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
       this.server.to(`session:${token}`).emit('order:ready', payload);
     }
     this.server.to(`business:${order.businessId}`).emit('order:ready', payload);
+    this.server.to(`kitchen:${order.businessId}`).emit('order:ready', payload);
     this.logger.debug({ orderId: order.id }, 'order:ready emitted');
     this.emitDisplayUpdate(order);
   }
 
-  /** DELIVERED → session (customer sees "served") + business (cashier payment queue opens). */
+  /**
+   * DELIVERED → session (customer sees "served") + business (cashier payment queue opens)
+   * + kitchen (order leaves the KDS board on every screen watching it, not just the actor's).
+   */
   emitOrderServed(order: Order): void {
     const payload = this.buildPayload(order, true);
     const token = order.tableSession?.sessionToken;
@@ -353,6 +475,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
       this.server.to(`session:${token}`).emit('order:served', payload);
     }
     this.server.to(`business:${order.businessId}`).emit('order:served', payload);
+    this.server.to(`kitchen:${order.businessId}`).emit('order:served', payload);
     this.logger.debug({ orderId: order.id }, 'order:served emitted');
     this.emitDisplayRemoved(order);
   }
@@ -403,6 +526,22 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
     this.server.to(`business:${order.businessId}`).emit('order:paid', payload);
     this.logger.debug({ orderId: order.id, paymentId }, 'order:paid emitted');
+  }
+
+  /**
+   * A tip was written on an order — business room only (staff dashboards/bill views), not
+   * kitchen. The customer's own device already has the value from its mutation response;
+   * this is for staff visibility and for other devices watching the same business.
+   */
+  emitTipUpdated(order: Order): void {
+    const payload: OrderTipUpdatedPayload = {
+      orderId: order.id,
+      businessId: order.businessId,
+      tipAmount: Number(order.tipAmount ?? 0),
+      updatedAt: order.updatedAt.toISOString(),
+    };
+    this.server.to(`business:${order.businessId}`).emit('order:tip-updated', payload);
+    this.logger.debug({ orderId: order.id }, 'order:tip-updated emitted');
   }
 
   /** PAYMENT_FAILED → session (customer alert) + business (cashier needs to retry/cancel). */
@@ -456,6 +595,14 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
 
     this.server.to(`business:${order.businessId}`).emit('order-pending-confirmation', payload);
     this.logger.debug({ orderId: order.id }, 'Order pending confirmation broadcast');
+  }
+
+  /** A product's isAvailable flag changed → business (staff dashboards) + menu (open guest menu pages). */
+  emitMenuAvailabilityChanged(businessId: string, productId: string, isAvailable: boolean): void {
+    const payload: MenuAvailabilityChangedPayload = { businessId, productId, isAvailable };
+    this.server.to(`business:${businessId}`).emit('menu:availability-changed', payload);
+    this.server.to(`menu:${businessId}`).emit('menu:availability-changed', payload);
+    this.logger.debug({ businessId, productId, isAvailable }, 'menu:availability-changed emitted');
   }
 
   /**
@@ -536,7 +683,38 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     return false;
   }
 
+  /**
+   * Owners always pass — StaffPermission only governs staff accounts, matching the frontend
+   * route guards (e.g. routes/_admin/kitchen.tsx only gates on `user.permissions` for
+   * `user?.type === 'staff'`). Mirrors that same permission requirement here so a staff JWT
+   * can't join a room the UI would never have let that role open in the first place.
+   */
+  private hasPermission(payload: AuthPayload, permission: StaffPermission): boolean {
+    if (payload.type === 'owner') return true;
+    return ROLE_PERMISSION_MAP[payload.role]?.includes(permission) ?? false;
+  }
+
   // ── Private helpers ──────────────────────────────────────────────────────────
+
+  /**
+   * Every join- and leave- handler's @MessageBody() is a raw socket.io payload with no
+   * class-validator DTO layer (unlike every REST DTO in this codebase) — the declared
+   * `string` param types were previously just a compile-time hint with nothing enforcing them
+   * at runtime. A businessId/sessionToken/token is always used as a room-name suffix or a raw
+   * WHERE-clause value, so this guards against non-string, empty, or unreasonably long input
+   * before it reaches template-literal room names or a repository query.
+   */
+  private isValidRoomKey(value: unknown): value is string {
+    return typeof value === 'string' && value.length > 0 && value.length <= 512;
+  }
+
+  private isValidCallWaiterBody(value: unknown): value is { sessionToken: string } {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      this.isValidRoomKey((value as Record<string, unknown>).sessionToken)
+    );
+  }
 
   private buildPayload(order: Order, playSound: boolean): OrderEventPayload {
     return {
