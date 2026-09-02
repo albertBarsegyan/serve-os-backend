@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
@@ -20,6 +20,7 @@ import {
   OPEN_ORDER_STATUSES,
   TableSessionsService,
 } from '@modules/table-sessions/table-sessions.service';
+import { syncTableReservedState } from '@modules/table-sessions/table-reserved-state.util';
 import { CreateOrderFromQrDto } from './dto/create-order-from-qr.dto';
 import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
@@ -83,6 +84,8 @@ export class OrdersService {
     await queryRunner.startTransaction();
 
     try {
+      await this.lockAndReactivateSession(queryRunner.manager, tableSession.id);
+
       const table = await queryRunner.manager.findOne(Table, {
         where: { id: tableSession.tableId, businessId: tableSession.businessId },
       });
@@ -207,6 +210,8 @@ export class OrdersService {
 
     let savedOrderId: string;
     try {
+      await this.lockAndReactivateSession(queryRunner.manager, session.id);
+
       let totalAmount = 0;
       const orderItems: OrderItem[] = [];
 
@@ -329,7 +334,19 @@ export class OrdersService {
       if (!dto.tableId) {
         throw new BadRequestException('tableId is required for DINE_IN orders');
       }
-      const session = await this.tableSessionsService.findOrCreateForTable(businessId, dto.tableId);
+      const session = dto.sessionId
+        ? await this.tableSessionsService.getActiveSessionForTable(
+            businessId,
+            dto.tableId,
+            dto.sessionId,
+          )
+        : await this.tableSessionsService.getOrCreateDefaultSessionForTable(
+            businessId,
+            dto.tableId,
+          );
+      if (!session) {
+        throw new NotFoundException('Active session not found for this table');
+      }
       tableSessionId = session.id;
       tableId = dto.tableId;
     }
@@ -759,36 +776,43 @@ export class OrdersService {
     // Previously the code checked BusinessFeature.CASH_PAYMENT / POS_PAYMENT which do not exist
     // on the enum. To avoid referencing missing enum members we skip those checks here.
 
-    const payment = await this.paymentRepository.save(
-      this.paymentRepository.create({
-        businessId,
-        orderId: order.id,
-        method,
-        status: PaymentStatus.CONFIRMED,
-        amount: Number(order.totalAmount) + Number(dto.tipAmount ?? 0),
-        tipAmount: dto.tipAmount ?? 0,
-        confirmedAt: new Date(),
-        confirmedById: null, // Will be set by staff when staff authentication is fully integrated
-      }),
-    );
-
-    order.tipAmount = await recomputeOrderTipAmount(this.dataSource.manager, order.id);
     if (dto.tipAmount && dto.tipAmount >= STAFF_TIP_LOG_THRESHOLD_MAJOR_UNITS) {
       this.logger.warn(
         { orderId: order.id, tipAmount: dto.tipAmount },
         'Staff recorded a tip above the soft threshold',
       );
     }
-    order.paymentStatus = OrderPaymentStatus.PAID;
-    // Must persist before transitionOrder, which now re-fetches+locks its own copy of the
-    // row rather than saving this in-memory object — an unsaved mutation here would be lost.
-    await this.orderRepository.save(order);
 
+    let payment!: Payment;
     // order:paid must reach clients before any session-closed emitted by refreshLifecycle
     // as a side effect of this same transition, so it's fired from onDispatched rather than
     // after transitionOrder returns.
-    return this.transitionOrder(order, OrderStatus.CLOSED, SYSTEM_ACTOR, (closed) =>
-      this.kitchenGateway.emitOrderPaid(closed, payment.id),
+    return this.transitionOrder(
+      order,
+      OrderStatus.CLOSED,
+      SYSTEM_ACTOR,
+      (closed) => this.kitchenGateway.emitOrderPaid(closed, payment.id),
+      // Creating the payment and recomputing the tip inside the same locked transaction as
+      // the CLOSED transition means a losing race (e.g. cash and POS confirmed in the same
+      // instant) rolls the payment back with the transition instead of leaving a CONFIRMED
+      // payment on record for an order that never actually closed.
+      async (manager, locked) => {
+        payment = await manager.save(
+          manager.create(Payment, {
+            businessId,
+            orderId: locked.id,
+            method,
+            status: PaymentStatus.CONFIRMED,
+            amount: Number(locked.totalAmount) + Number(dto.tipAmount ?? 0),
+            tipAmount: dto.tipAmount ?? 0,
+            confirmedAt: new Date(),
+            confirmedById: null, // Will be set by staff when staff authentication is fully integrated
+          }),
+        );
+
+        locked.tipAmount = await recomputeOrderTipAmount(manager, locked.id);
+        locked.paymentStatus = OrderPaymentStatus.PAID;
+      },
     );
   }
 
@@ -809,6 +833,12 @@ export class OrdersService {
     next: OrderStatus,
     actor: ActorInfo = SYSTEM_ACTOR,
     onDispatched?: (order: Order) => void,
+    // Runs inside the same locked transaction, after the transition is validated but before
+    // the order is saved/committed — lets callers that must persist a related record (e.g. a
+    // payment confirmation) atomically with the status change, so a losing race rolls both
+    // back together instead of leaving a payment marked CONFIRMED against an order that never
+    // actually transitioned.
+    withinTransaction?: (manager: EntityManager, locked: Order) => Promise<void>,
   ): Promise<Order> {
     const transitionActor = this.resolveTransitionActor(actor);
 
@@ -844,6 +874,9 @@ export class OrdersService {
       // transition() validates and mutates against the row's current committed status,
       // not the caller's possibly-stale in-memory copy.
       this.orderTransitionService.transition(locked, next, transitionActor);
+      if (withinTransaction) {
+        await withinTransaction(queryRunner.manager, locked);
+      }
       updatedOrder = await queryRunner.manager.save(locked);
       await queryRunner.commitTransaction();
     } catch (err) {
@@ -931,20 +964,60 @@ export class OrdersService {
     payment: Payment,
     staffId: string | null,
   ): Promise<Order> {
-    payment.status = PaymentStatus.CONFIRMED;
-    payment.confirmedAt = new Date();
-    payment.confirmedById = staffId;
-    await this.paymentRepository.save(payment);
-
-    order.tipAmount = await recomputeOrderTipAmount(this.dataSource.manager, order.id);
-    order.paymentStatus = OrderPaymentStatus.PAID;
-    await this.orderRepository.save(order);
-
     // order:paid must reach clients before any session-closed emitted by refreshLifecycle
     // as a side effect of this same transition (see transitionOrder's onDispatched).
-    return this.transitionOrder(order, OrderStatus.CLOSED, SYSTEM_ACTOR, (closed) =>
-      this.kitchenGateway.emitOrderPaid(closed, payment.id),
+    return this.transitionOrder(
+      order,
+      OrderStatus.CLOSED,
+      SYSTEM_ACTOR,
+      (closed) => this.kitchenGateway.emitOrderPaid(closed, payment.id),
+      // Confirming the payment and recomputing the tip inside the same locked transaction
+      // as the CLOSED transition means a raced-out caller (e.g. a duplicate confirm click,
+      // or the reconcile poller racing a webhook) never leaves the payment marked CONFIRMED
+      // against an order that failed to transition — both roll back together.
+      async (manager, locked) => {
+        payment.status = PaymentStatus.CONFIRMED;
+        payment.confirmedAt = new Date();
+        payment.confirmedById = staffId;
+        await manager.save(payment);
+
+        locked.tipAmount = await recomputeOrderTipAmount(manager, locked.id);
+        locked.paymentStatus = OrderPaymentStatus.PAID;
+      },
     );
+  }
+
+  /**
+   * Locks the session row before an order-insert transaction (createFromQr,
+   * createGuestOrder) touches it, and reactivates the session if refreshLifecycle
+   * (table-sessions.service.ts) raced it closed in the gap between the guard's
+   * active-session check and this transaction acquiring the lock — the guest's order is
+   * real and in flight, so it shouldn't eject them mid-checkout. refreshLifecycle takes the
+   * same row lock before deciding whether to close, so the two can never interleave: either
+   * this insert's lock is granted first (refreshLifecycle then counts this order as open and
+   * leaves the session alone), or refreshLifecycle's close commits first and this reopens it.
+   */
+  private async lockAndReactivateSession(
+    manager: EntityManager,
+    sessionId: string,
+  ): Promise<TableSession> {
+    const locked = await manager
+      .createQueryBuilder(TableSession, 'session')
+      .setLock('pessimistic_write')
+      .where('session.id = :id', { id: sessionId })
+      .getOne();
+    if (!locked) throw new NotFoundException('Table session not found');
+
+    if (!locked.isActive) {
+      // A table can carry several concurrent sessions now, so there's no shared slot to
+      // conflict over here — just reactivate directly.
+      await manager.update(TableSession, { id: locked.id }, { isActive: true, closedAt: null });
+      await syncTableReservedState(manager, locked.tableId);
+      locked.isActive = true;
+      locked.closedAt = null;
+    }
+
+    return locked;
   }
 
   private resolveTransitionActor(actor: ActorInfo): TransitionActor {

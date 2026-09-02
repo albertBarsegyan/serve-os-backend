@@ -46,6 +46,17 @@ export class CreateStaffOrderDto {
   @IsUUID()
   tableId?: string;
 
+  @ApiProperty({
+    required: false,
+    example: 'uuid-v4-session-id',
+    description:
+      "Which of the table's (possibly several) active sessions to attach this order to. " +
+      'Omit only when the table has zero or exactly one active session.',
+  })
+  @IsOptional()
+  @IsUUID()
+  sessionId?: string;
+
   @ApiProperty({ type: [CreateStaffOrderItemDto] })
   @IsNotEmpty()
   @IsArray()

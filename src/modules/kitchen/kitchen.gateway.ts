@@ -26,6 +26,7 @@ import {
 } from '@modules/display/utils/display-order.util';
 import type { AuthPayload } from '@modules/auth/types/auth-payload.type';
 import { ROLE_PERMISSION_MAP, StaffPermission } from '@common/enums/staff-permission.enum';
+import { CLIENT_EVENTS, SERVER_EVENTS } from './kitchen-events.constants';
 
 interface AuthResult {
   payload: AuthPayload;
@@ -94,6 +95,33 @@ export interface OrderTipUpdatedPayload {
 
 export interface SessionClosedPayload {
   sessionId: string;
+}
+
+/** Emitted for session:opened — a new guest party seated (or a staff order opened one). */
+export interface SessionOpenedPayload {
+  sessionId: string;
+  businessId: string;
+  tableId: string;
+  /** 'guest' for a QR scan, 'staff' when a staff-created order opened the session. */
+  source: 'guest' | 'staff';
+  at: string;
+}
+
+/** Emitted for session:joined / session:split — payload only carries enough to know "refetch
+ * this business's sessions," not the full merge graph. */
+export interface SessionLifecyclePayload {
+  sessionId: string;
+  businessId: string;
+  tableId: string;
+  at: string;
+}
+
+/** Emitted for order:waiter-acknowledged — clears the call raised by order:call-waiter. */
+export interface WaiterAcknowledgedPayload {
+  sessionId: string;
+  businessId: string;
+  tableId: string;
+  at: string;
 }
 
 export interface DisplayOrderRemovedPayload {
@@ -186,7 +214,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
   }
 
-  @SubscribeMessage('join-kitchen')
+  @SubscribeMessage(CLIENT_EVENTS.JOIN_KITCHEN)
   async handleJoinKitchen(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
     if (!this.isValidRoomKey(body)) return { event: 'error', data: 'Invalid payload' };
     const businessId = body;
@@ -207,7 +235,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     return { event: 'joined', data: businessId };
   }
 
-  @SubscribeMessage('join-business')
+  @SubscribeMessage(CLIENT_EVENTS.JOIN_BUSINESS)
   async handleJoinBusiness(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
     if (!this.isValidRoomKey(body)) return { event: 'error', data: 'Invalid payload' };
     const businessId = body;
@@ -234,25 +262,25 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * active business) keeps receiving the first tenant's live order/payment feed indefinitely,
    * since it's never explicitly removed until the whole connection drops.
    */
-  @SubscribeMessage('leave-kitchen')
+  @SubscribeMessage(CLIENT_EVENTS.LEAVE_KITCHEN)
   async handleLeaveKitchen(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
     if (!this.isValidRoomKey(body)) return;
     await client.leave(`kitchen:${body}`);
   }
 
-  @SubscribeMessage('leave-business')
+  @SubscribeMessage(CLIENT_EVENTS.LEAVE_BUSINESS)
   async handleLeaveBusiness(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
     if (!this.isValidRoomKey(body)) return;
     await client.leave(`business:${body}`);
   }
 
-  @SubscribeMessage('leave-session')
+  @SubscribeMessage(CLIENT_EVENTS.LEAVE_SESSION)
   async handleLeaveSession(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
     if (!this.isValidRoomKey(body)) return;
     await client.leave(`session:${body}`);
   }
 
-  @SubscribeMessage('leave-display')
+  @SubscribeMessage(CLIENT_EVENTS.LEAVE_DISPLAY)
   async handleLeaveDisplay(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
     if (!this.isValidRoomKey(body)) return;
     await client.leave(`display:${body}`);
@@ -263,14 +291,14 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * unauthenticated (GET /menu/customer, @Public()), so a live feed of "an item's availability
    * changed" leaks nothing the guest couldn't already fetch directly.
    */
-  @SubscribeMessage('join-menu')
+  @SubscribeMessage(CLIENT_EVENTS.JOIN_MENU)
   async handleJoinMenu(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
     if (!this.isValidRoomKey(body)) return { event: 'error', data: 'Invalid payload' };
     await client.join(`menu:${body}`);
     return { event: 'joined', data: body };
   }
 
-  @SubscribeMessage('leave-menu')
+  @SubscribeMessage(CLIENT_EVENTS.LEAVE_MENU)
   async handleLeaveMenu(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
     if (!this.isValidRoomKey(body)) return;
     await client.leave(`menu:${body}`);
@@ -282,7 +310,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * invalid/revoked token must not just get an error reply, it must be disconnected,
    * since there's no human at the keyboard to retry with a fresh one.
    */
-  @SubscribeMessage('join-display')
+  @SubscribeMessage(CLIENT_EVENTS.JOIN_DISPLAY)
   async handleJoinDisplay(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
     if (!this.isValidRoomKey(body)) return { event: 'error', data: 'Invalid payload' };
     const token = body;
@@ -310,7 +338,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * active table session, otherwise a stale/closed/guessed token could still be
    * used to listen in on a table's live order feed.
    */
-  @SubscribeMessage('join-session')
+  @SubscribeMessage(CLIENT_EVENTS.JOIN_SESSION)
   async handleJoinSession(@ConnectedSocket() client: Socket, @MessageBody() body: unknown) {
     if (!this.isValidRoomKey(body)) return { event: 'error', data: 'Invalid payload' };
     const sessionToken = body;
@@ -354,13 +382,13 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
         actor: { type: 'system', id: 'system' },
         tipAmount: Number(activeOrder.tipAmount ?? 0),
       };
-      client.emit('order:status-changed', syncPayload);
+      client.emit(SERVER_EVENTS.ORDER_STATUS_CHANGED, syncPayload);
     }
 
     return { event: 'joined', data: sessionToken };
   }
 
-  @SubscribeMessage('call-waiter')
+  @SubscribeMessage(CLIENT_EVENTS.CALL_WAITER)
   async handleCallWaiter(@MessageBody() body: unknown): Promise<void> {
     if (!this.isValidCallWaiterBody(body)) return;
     const { sessionToken } = body;
@@ -376,6 +404,12 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     });
     if (!session) return;
 
+    // Persisted (not just broadcast) so a staff client that reconnects, or opens the tables
+    // page after the call was raised, still sees it — a page refresh must not lose the call.
+    session.waiterCallActive = true;
+    session.waiterCallAt = new Date();
+    await this.tableSessionRepository.save(session);
+
     const payload: CallWaiterPayload = {
       businessId: session.businessId,
       tableId: session.tableId,
@@ -384,7 +418,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
       at: new Date().toISOString(),
     };
 
-    this.server.to(`business:${session.businessId}`).emit('order:call-waiter', payload);
+    this.server.to(`business:${session.businessId}`).emit(SERVER_EVENTS.ORDER_CALL_WAITER, payload);
     this.logger.debug({ sessionToken }, 'Call-waiter broadcast');
   }
 
@@ -416,7 +450,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   /** CREATED → business room (waiter gets an audible new-order alert). */
   emitOrderCreated(order: Order): void {
     const payload = this.buildPayload(order, true);
-    this.server.to(`business:${order.businessId}`).emit('order:created', payload);
+    this.server.to(`business:${order.businessId}`).emit(SERVER_EVENTS.ORDER_CREATED, payload);
     this.logger.debug({ orderId: order.id }, 'order:created emitted');
   }
 
@@ -425,9 +459,11 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     const payload = this.buildPayload(order, true);
     const token = order.tableSession?.sessionToken;
     if (token) {
-      this.server.to(`session:${token}`).emit('order:confirmed', { ...payload, playSound: false });
+      this.server
+        .to(`session:${token}`)
+        .emit(SERVER_EVENTS.ORDER_CONFIRMED, { ...payload, playSound: false });
     }
-    this.server.to(`kitchen:${order.businessId}`).emit('order:confirmed', payload);
+    this.server.to(`kitchen:${order.businessId}`).emit(SERVER_EVENTS.ORDER_CONFIRMED, payload);
     this.logger.debug({ orderId: order.id }, 'order:confirmed emitted');
     this.emitDisplayUpdate(order);
   }
@@ -443,10 +479,10 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     const payload = this.buildPayload(order, true);
     const token = order.tableSession?.sessionToken;
     if (token) {
-      this.server.to(`session:${token}`).emit('order:preparing', payload);
+      this.server.to(`session:${token}`).emit(SERVER_EVENTS.ORDER_PREPARING, payload);
     }
-    this.server.to(`business:${order.businessId}`).emit('order:preparing', payload);
-    this.server.to(`kitchen:${order.businessId}`).emit('order:preparing', payload);
+    this.server.to(`business:${order.businessId}`).emit(SERVER_EVENTS.ORDER_PREPARING, payload);
+    this.server.to(`kitchen:${order.businessId}`).emit(SERVER_EVENTS.ORDER_PREPARING, payload);
     this.logger.debug({ orderId: order.id }, 'order:preparing emitted');
     this.emitDisplayUpdate(order);
   }
@@ -456,10 +492,10 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     const payload = this.buildPayload(order, true);
     const token = order.tableSession?.sessionToken;
     if (token) {
-      this.server.to(`session:${token}`).emit('order:ready', payload);
+      this.server.to(`session:${token}`).emit(SERVER_EVENTS.ORDER_READY, payload);
     }
-    this.server.to(`business:${order.businessId}`).emit('order:ready', payload);
-    this.server.to(`kitchen:${order.businessId}`).emit('order:ready', payload);
+    this.server.to(`business:${order.businessId}`).emit(SERVER_EVENTS.ORDER_READY, payload);
+    this.server.to(`kitchen:${order.businessId}`).emit(SERVER_EVENTS.ORDER_READY, payload);
     this.logger.debug({ orderId: order.id }, 'order:ready emitted');
     this.emitDisplayUpdate(order);
   }
@@ -472,10 +508,10 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     const payload = this.buildPayload(order, true);
     const token = order.tableSession?.sessionToken;
     if (token) {
-      this.server.to(`session:${token}`).emit('order:served', payload);
+      this.server.to(`session:${token}`).emit(SERVER_EVENTS.ORDER_SERVED, payload);
     }
-    this.server.to(`business:${order.businessId}`).emit('order:served', payload);
-    this.server.to(`kitchen:${order.businessId}`).emit('order:served', payload);
+    this.server.to(`business:${order.businessId}`).emit(SERVER_EVENTS.ORDER_SERVED, payload);
+    this.server.to(`kitchen:${order.businessId}`).emit(SERVER_EVENTS.ORDER_SERVED, payload);
     this.logger.debug({ orderId: order.id }, 'order:served emitted');
     this.emitDisplayRemoved(order);
   }
@@ -485,10 +521,10 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     const payload = this.buildPayload(order, false);
     const token = order.tableSession?.sessionToken;
     if (token) {
-      this.server.to(`session:${token}`).emit('order:cancelled', payload);
+      this.server.to(`session:${token}`).emit(SERVER_EVENTS.ORDER_CANCELLED, payload);
     }
-    this.server.to(`business:${order.businessId}`).emit('order:cancelled', payload);
-    this.server.to(`kitchen:${order.businessId}`).emit('order:cancelled', payload);
+    this.server.to(`business:${order.businessId}`).emit(SERVER_EVENTS.ORDER_CANCELLED, payload);
+    this.server.to(`kitchen:${order.businessId}`).emit(SERVER_EVENTS.ORDER_CANCELLED, payload);
     this.logger.debug({ orderId: order.id }, 'order:cancelled emitted');
     this.emitDisplayRemoved(order);
   }
@@ -505,9 +541,9 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     };
     const token = order.tableSession?.sessionToken;
     if (token) {
-      this.server.to(`session:${token}`).emit('order:payment-open', payload);
+      this.server.to(`session:${token}`).emit(SERVER_EVENTS.ORDER_PAYMENT_OPEN, payload);
     }
-    this.server.to(`business:${order.businessId}`).emit('order:payment-open', payload);
+    this.server.to(`business:${order.businessId}`).emit(SERVER_EVENTS.ORDER_PAYMENT_OPEN, payload);
     this.logger.debug({ orderId: order.id, paymentId }, 'order:payment-open emitted');
   }
 
@@ -522,9 +558,9 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     };
     const token = order.tableSession?.sessionToken;
     if (token) {
-      this.server.to(`session:${token}`).emit('order:paid', payload);
+      this.server.to(`session:${token}`).emit(SERVER_EVENTS.ORDER_PAID, payload);
     }
-    this.server.to(`business:${order.businessId}`).emit('order:paid', payload);
+    this.server.to(`business:${order.businessId}`).emit(SERVER_EVENTS.ORDER_PAID, payload);
     this.logger.debug({ orderId: order.id, paymentId }, 'order:paid emitted');
   }
 
@@ -540,7 +576,7 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
       tipAmount: Number(order.tipAmount ?? 0),
       updatedAt: order.updatedAt.toISOString(),
     };
-    this.server.to(`business:${order.businessId}`).emit('order:tip-updated', payload);
+    this.server.to(`business:${order.businessId}`).emit(SERVER_EVENTS.ORDER_TIP_UPDATED, payload);
     this.logger.debug({ orderId: order.id }, 'order:tip-updated emitted');
   }
 
@@ -549,9 +585,11 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     const payload: PaymentFailedPayload = { ...this.buildPayload(order, true), reason };
     const token = order.tableSession?.sessionToken;
     if (token) {
-      this.server.to(`session:${token}`).emit('order:payment-failed', payload);
+      this.server.to(`session:${token}`).emit(SERVER_EVENTS.ORDER_PAYMENT_FAILED, payload);
     }
-    this.server.to(`business:${order.businessId}`).emit('order:payment-failed', payload);
+    this.server
+      .to(`business:${order.businessId}`)
+      .emit(SERVER_EVENTS.ORDER_PAYMENT_FAILED, payload);
     this.logger.debug({ orderId: order.id, reason }, 'order:payment-failed emitted');
     this.emitDisplayRemoved(order);
   }
@@ -561,23 +599,83 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
     const payload: OrderRefundedPayload = { ...this.buildPayload(order, false), refundId };
     const token = order.tableSession?.sessionToken;
     if (token) {
-      this.server.to(`session:${token}`).emit('order:refunded', payload);
+      this.server.to(`session:${token}`).emit(SERVER_EVENTS.ORDER_REFUNDED, payload);
     }
-    this.server.to(`business:${order.businessId}`).emit('order:refunded', payload);
-    this.server.to(`kitchen:${order.businessId}`).emit('order:refunded', payload);
+    this.server.to(`business:${order.businessId}`).emit(SERVER_EVENTS.ORDER_REFUNDED, payload);
+    this.server.to(`kitchen:${order.businessId}`).emit(SERVER_EVENTS.ORDER_REFUNDED, payload);
     this.logger.debug({ orderId: order.id, refundId }, 'order:refunded emitted');
     this.emitDisplayRemoved(order);
   }
 
   /**
-   * A table session ends (all orders settled/paid, or a staff-initiated close) → session
-   * room only, so the guest's browser can clear its stored session token/credentials and
-   * stop treating itself as seated at the table.
+   * A table session ends (all orders settled/paid, or a staff-initiated close) → session room
+   * (so the guest's browser can clear its stored session token/credentials) + business room
+   * (so every staff dashboard learns the session is gone and stops offering to close/act on
+   * it — this used to be session-room-only, which is why a stale "Close session" button could
+   * fire against a session the backend had already torn down).
    */
-  emitSessionClosed(sessionToken: string, sessionId: string): void {
+  emitSessionClosed(sessionToken: string, sessionId: string, businessId: string): void {
     const payload: SessionClosedPayload = { sessionId };
-    this.server.to(`session:${sessionToken}`).emit('session-closed', payload);
-    this.logger.debug({ sessionId, sessionToken }, 'session-closed emitted');
+    this.server.to(`session:${sessionToken}`).emit(SERVER_EVENTS.SESSION_CLOSED, payload);
+    this.server.to(`business:${businessId}`).emit(SERVER_EVENTS.SESSION_CLOSED, payload);
+    this.logger.debug({ sessionId, sessionToken, businessId }, 'session-closed emitted');
+  }
+
+  /** A new session opened (guest QR scan, or a staff order opening one) → business room. */
+  emitSessionOpened(
+    session: {
+      id: string;
+      businessId: string;
+      tableId: string;
+    },
+    source: 'guest' | 'staff',
+  ): void {
+    const payload: SessionOpenedPayload = {
+      sessionId: session.id,
+      businessId: session.businessId,
+      tableId: session.tableId,
+      source,
+      at: new Date().toISOString(),
+    };
+    this.server.to(`business:${session.businessId}`).emit(SERVER_EVENTS.SESSION_OPENED, payload);
+    this.logger.debug({ sessionId: session.id, source }, 'session:opened emitted');
+  }
+
+  /** Two sessions were billed together (or a join was reversed) → business room. */
+  emitSessionJoined(session: { id: string; businessId: string; tableId: string }): void {
+    const payload: SessionLifecyclePayload = {
+      sessionId: session.id,
+      businessId: session.businessId,
+      tableId: session.tableId,
+      at: new Date().toISOString(),
+    };
+    this.server.to(`business:${session.businessId}`).emit(SERVER_EVENTS.SESSION_JOINED, payload);
+    this.logger.debug({ sessionId: session.id }, 'session:joined emitted');
+  }
+
+  emitSessionSplit(session: { id: string; businessId: string; tableId: string }): void {
+    const payload: SessionLifecyclePayload = {
+      sessionId: session.id,
+      businessId: session.businessId,
+      tableId: session.tableId,
+      at: new Date().toISOString(),
+    };
+    this.server.to(`business:${session.businessId}`).emit(SERVER_EVENTS.SESSION_SPLIT, payload);
+    this.logger.debug({ sessionId: session.id }, 'session:split emitted');
+  }
+
+  /** Staff acknowledged a raised waiter call → business room, clears it for every device. */
+  emitWaiterAcknowledged(session: { id: string; businessId: string; tableId: string }): void {
+    const payload: WaiterAcknowledgedPayload = {
+      sessionId: session.id,
+      businessId: session.businessId,
+      tableId: session.tableId,
+      at: new Date().toISOString(),
+    };
+    this.server
+      .to(`business:${session.businessId}`)
+      .emit(SERVER_EVENTS.ORDER_WAITER_ACKNOWLEDGED, payload);
+    this.logger.debug({ sessionId: session.id }, 'order:waiter-acknowledged emitted');
   }
 
   broadcastPendingConfirmation(order: Order): void {
@@ -593,15 +691,17 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
       })),
     };
 
-    this.server.to(`business:${order.businessId}`).emit('order-pending-confirmation', payload);
+    this.server
+      .to(`business:${order.businessId}`)
+      .emit(SERVER_EVENTS.ORDER_PENDING_CONFIRMATION, payload);
     this.logger.debug({ orderId: order.id }, 'Order pending confirmation broadcast');
   }
 
   /** A product's isAvailable flag changed → business (staff dashboards) + menu (open guest menu pages). */
   emitMenuAvailabilityChanged(businessId: string, productId: string, isAvailable: boolean): void {
     const payload: MenuAvailabilityChangedPayload = { businessId, productId, isAvailable };
-    this.server.to(`business:${businessId}`).emit('menu:availability-changed', payload);
-    this.server.to(`menu:${businessId}`).emit('menu:availability-changed', payload);
+    this.server.to(`business:${businessId}`).emit(SERVER_EVENTS.MENU_AVAILABILITY_CHANGED, payload);
+    this.server.to(`menu:${businessId}`).emit(SERVER_EVENTS.MENU_AVAILABILITY_CHANGED, payload);
     this.logger.debug({ businessId, productId, isAvailable }, 'menu:availability-changed emitted');
   }
 
@@ -732,14 +832,18 @@ export class KitchenGateway implements OnGatewayConnection, OnGatewayDisconnect 
   /** Order entered a displayable status (CONFIRMED/IN_KITCHEN/READY) → display room, sanitized. */
   private emitDisplayUpdate(order: Order): void {
     const payload: DisplayOrderPayload = buildDisplayOrderPayload(order);
-    this.server.to(`display:${order.businessId}`).emit('display:order-updated', payload);
+    this.server
+      .to(`display:${order.businessId}`)
+      .emit(SERVER_EVENTS.DISPLAY_ORDER_UPDATED, payload);
     this.logger.debug({ orderId: order.id }, 'display:order-updated emitted');
   }
 
   /** Order left the displayable set (served/cancelled/payment-failed/refunded) → drop it. */
   private emitDisplayRemoved(order: Order): void {
     const payload: DisplayOrderRemovedPayload = { orderId: order.id };
-    this.server.to(`display:${order.businessId}`).emit('display:order-removed', payload);
+    this.server
+      .to(`display:${order.businessId}`)
+      .emit(SERVER_EVENTS.DISPLAY_ORDER_REMOVED, payload);
     this.logger.debug({ orderId: order.id }, 'display:order-removed emitted');
   }
 }

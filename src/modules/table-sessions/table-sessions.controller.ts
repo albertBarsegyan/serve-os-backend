@@ -20,6 +20,7 @@ import { AllowWithoutBusiness } from '@common/decorators/allow-without-business.
 import { TableSessionsService } from './table-sessions.service';
 import { ScanSessionDto } from './dto/scan-session.dto';
 import { CreateTipDto, TipResponseDto } from './dto/create-tip.dto';
+import { JoinSessionDto } from './dto/join-session.dto';
 import { TenantGuard } from '@common/guards/tenant.guard';
 import { TableSessionGuard } from '@common/guards/table-session.guard';
 import { TipRateLimitGuard } from '@common/guards/tip-rate-limit.guard';
@@ -52,8 +53,16 @@ export class TableSessionsController {
   @UseGuards(ThrottlerGuard)
   @Throttle(SESSION_THROTTLE)
   @ApiOperation({ summary: 'Create or rejoin a guest session by QR code' })
-  async create(@Body() dto: ScanSessionDto, @Res({ passthrough: true }) res: express.Response) {
-    const result = await this.tableSessionsService.scan(dto.qrCode);
+  async create(
+    @Body() dto: ScanSessionDto,
+    @Req() req: express.Request,
+    @Res({ passthrough: true }) res: express.Response,
+    @Headers('x-session-token') headerToken?: string,
+  ) {
+    const result = await this.tableSessionsService.scan(
+      dto.qrCode,
+      this.readSessionToken(req, headerToken),
+    );
     this.setSessionCookies(res, result.sessionToken, result.businessId);
     return result;
   }
@@ -65,8 +74,16 @@ export class TableSessionsController {
   @UseGuards(ThrottlerGuard)
   @Throttle(SESSION_THROTTLE)
   @ApiOperation({ summary: 'Scan QR and create/rejoin active table session' })
-  async scan(@Body() dto: ScanSessionDto, @Res({ passthrough: true }) res: express.Response) {
-    const result = await this.tableSessionsService.scan(dto.qrCode);
+  async scan(
+    @Body() dto: ScanSessionDto,
+    @Req() req: express.Request,
+    @Res({ passthrough: true }) res: express.Response,
+    @Headers('x-session-token') headerToken?: string,
+  ) {
+    const result = await this.tableSessionsService.scan(
+      dto.qrCode,
+      this.readSessionToken(req, headerToken),
+    );
     this.setSessionCookies(res, result.sessionToken, result.businessId);
     return result;
   }
@@ -80,9 +97,7 @@ export class TableSessionsController {
   @Get('current')
   @ApiOperation({ summary: 'Get active guest session from cookie (mirrors /auth/me)' })
   current(@Req() req: express.Request, @Headers('x-session-token') headerToken?: string) {
-    const token =
-      (req.cookies as Record<string, string> | undefined)?.['customer_session_token'] ??
-      headerToken;
+    const token = this.readSessionToken(req, headerToken);
     if (!token) {
       throw new NotFoundException('No session token provided');
     }
@@ -94,13 +109,43 @@ export class TableSessionsController {
   @Get('resume')
   @ApiOperation({ summary: 'Resume an existing session from the stored cookie or token header' })
   resume(@Req() req: express.Request, @Headers('x-session-token') headerToken?: string) {
-    const token =
-      (req.cookies as Record<string, string> | undefined)?.['customer_session_token'] ??
-      headerToken;
+    const token = this.readSessionToken(req, headerToken);
     if (!token) {
       throw new NotFoundException('No session token provided');
     }
     return this.tableSessionsService.resumeByToken(token);
+  }
+
+  /**
+   * Guest fallback for the order-tracking view: when the client's local record for the
+   * session's most recent order is missing (storage cleared, or a QR re-scan opened a
+   * context that never had it), this rebuilds a receipt from the still-active session's
+   * most recent order server-side rather than leaving the guest stuck on the plain menu.
+   */
+  @Public()
+  @AllowWithoutBusiness()
+  @Get(':sessionToken/recent-order')
+  @ApiOperation({ summary: "Guest fallback: recover the session's most recent order" })
+  @ApiResponse({ status: 404, description: 'No order found for this session' })
+  async recentOrder(@Param('sessionToken') sessionToken: string) {
+    const session = await this.tableSessionsService.getActiveByToken(sessionToken);
+    const order = await this.tableSessionsService.getRecentOrderDetailForSession(session.id);
+    if (!order) {
+      throw new NotFoundException('No order found for this session');
+    }
+
+    return {
+      orderId: order.id,
+      items: order.items.map((item) => ({
+        name: item.product?.name ?? 'Item',
+        qty: item.quantity,
+        price: Number(item.unitPrice) * item.quantity,
+      })),
+      total: Number(order.totalAmount),
+      tableNumber: order.table ? `Table ${order.table.number}` : '',
+      placedAt: order.createdAt.getTime(),
+      paymentMethod: 'ONLINE',
+    };
   }
 
   /**
@@ -126,6 +171,12 @@ export class TableSessionsController {
     @Req() req: AuthenticatedRequest,
   ): Promise<TipResponseDto> {
     return this.tableSessionsService.createTip(req.tableSession!, req.order!, dto);
+  }
+
+  private readSessionToken(req: express.Request, headerToken?: string): string | undefined {
+    return (
+      (req.cookies as Record<string, string> | undefined)?.['customer_session_token'] ?? headerToken
+    );
   }
 
   private setSessionCookies(res: express.Response, sessionToken: string, businessId: string) {
@@ -156,6 +207,34 @@ export class TableSessionsController {
     return this.tableSessionsService.getBillBySession(sessionId, businessId);
   }
 
+  /**
+   * Every active session across the business, for the admin Tables view — a table can now
+   * carry several concurrent sessions (separate guest parties), so the frontend groups
+   * these (and the orders/payments it already fetches separately) by tableId client-side.
+   * Deliberately omits sessionToken: it's the guest's own bearer credential, and staff have
+   * no need to see (let alone reuse) it.
+   */
+  @ApiBearerAuth()
+  @UseGuards(TenantGuard)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER, StaffRole.CASHIER)
+  @Get()
+  @ApiOperation({ summary: 'List every active session for the business (staff/owner only)' })
+  async list(@Tenant(true) businessId: string) {
+    const sessions = await this.tableSessionsService.getActiveSessionsForBusiness(businessId);
+    return sessions.map((s) => ({
+      id: s.id,
+      tableId: s.tableId,
+      businessId: s.businessId,
+      customerName: s.customerName,
+      customerPhone: s.customerPhone,
+      openedAt: s.openedAt,
+      expiresAt: s.expiresAt,
+      mergedIntoSessionId: s.mergedIntoSessionId,
+      waiterCallActive: s.waiterCallActive,
+      waiterCallAt: s.waiterCallAt,
+    }));
+  }
+
   @ApiBearerAuth()
   @UseGuards(TenantGuard)
   @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER)
@@ -163,5 +242,51 @@ export class TableSessionsController {
   @ApiOperation({ summary: 'Close table session when all orders are settled' })
   close(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthenticatedRequest) {
     return this.tableSessionsService.closeSession(id, req.user);
+  }
+
+  /** Marks two sessions at the same table as billed together — see TableSession.mergedIntoSessionId. */
+  @ApiBearerAuth()
+  @UseGuards(TenantGuard)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER)
+  @Post(':id/join')
+  @ApiOperation({
+    summary: 'Join another session at the same table into this one for combined billing',
+  })
+  join(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: JoinSessionDto,
+    @Tenant(true) businessId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.tableSessionsService.joinSessions(businessId, id, dto, req.user);
+  }
+
+  /** Reverses a join — the session goes back to being billed on its own. */
+  @ApiBearerAuth()
+  @UseGuards(TenantGuard)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER)
+  @Post(':id/split')
+  @ApiOperation({ summary: 'Detach a session from whatever billing group it was joined into' })
+  split(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Tenant(true) businessId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.tableSessionsService.splitSession(businessId, id, req.user);
+  }
+
+  /** Clears a waiter call raised via the guest's call-waiter socket message — visible to
+   * every staff device via the order:waiter-acknowledged broadcast, not just this one. */
+  @ApiBearerAuth()
+  @UseGuards(TenantGuard)
+  @Roles(Role.OWNER, StaffRole.MANAGER, StaffRole.WAITER)
+  @Post(':id/waiter-acknowledge')
+  @ApiOperation({ summary: 'Acknowledge (clear) a raised waiter call for this session' })
+  acknowledgeWaiter(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Tenant(true) businessId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.tableSessionsService.acknowledgeWaiterCall(businessId, id, req.user);
   }
 }
