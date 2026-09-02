@@ -7,7 +7,10 @@ function mockLogger() {
 }
 
 function mockRepo<T>() {
-  return { findOne: jest.fn<Promise<T | null>, [unknown]>() };
+  return {
+    findOne: jest.fn<Promise<T | null>, [unknown]>(),
+    save: jest.fn<Promise<T>, [unknown]>((entity: unknown) => Promise.resolve(entity as T)),
+  };
 }
 
 describe('KitchenGateway.handleJoinSession', () => {

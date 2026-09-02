@@ -45,6 +45,7 @@ export const ROLE_PERMISSION_MAP: Record<StaffRole, StaffPermission[]> = {
     StaffPermission.ORDER_VIEW,
     StaffPermission.ORDER_CREATE,
     StaffPermission.ORDER_EDIT,
+    StaffPermission.ORDER_CANCEL,
     StaffPermission.TABLE_VIEW,
     StaffPermission.TABLE_ASSIGN,
     StaffPermission.TABLE_MANAGE_RESERVATION,
