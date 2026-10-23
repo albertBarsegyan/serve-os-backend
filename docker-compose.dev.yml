@@ -30,8 +30,8 @@ services:
       - .env.development
     volumes:
       - .:/app
-      - node_modules_dev:/app/node_modules
-    command: npm run start:dev
+      - node_modules_pnpm_dev:/app/node_modules
+    command: pnpm start:dev
     depends_on:
       db:
         condition: service_healthy
@@ -55,8 +55,8 @@ services:
       - .env.development
 
     volumes:
-      - node_modules_dev:/app/node_modules
-    command: npm run migration:dev:run
+      - node_modules_pnpm_dev:/app/node_modules
+    command: pnpm migration:dev:run
     depends_on:
       db:
         condition: service_healthy
@@ -116,7 +116,8 @@ services:
 volumes:
   postgres_data_dev:
   pgadmin_data_dev:
-  node_modules_dev:
+  # Renamed from node_modules_dev when switching npm → pnpm so the old npm layout isn't reused
+  node_modules_pnpm_dev:
   minio_data_dev:
 
 networks:

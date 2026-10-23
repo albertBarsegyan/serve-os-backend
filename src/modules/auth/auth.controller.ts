@@ -133,8 +133,8 @@ export class AuthController {
     @Req() req: ExpressRequest,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const ip =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress;
+    // req.ip honours the 'trust proxy' setting in main.ts; the raw header is client-spoofable
+    const ip = req.ip ?? req.socket.remoteAddress;
     const result = await this.authService.loginStaffWithPin(
       dto.staffId,
       dto.pin,

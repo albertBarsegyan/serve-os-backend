@@ -1,29 +1,37 @@
 import { NestFactory, Reflector } from '@nestjs/core';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import cookieParser from 'cookie-parser';
 import { AppModule } from '@src/app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   const logger = app.get(Logger);
   app.useLogger(logger);
+
+  // Behind nginx on the private Docker network: trust only private-range proxies so req.ip is
+  // the real client (per-IP throttling) and client-supplied X-Forwarded-For entries are ignored.
+  app.set('trust proxy', 'loopback, uniquelocal');
+  app.disable('x-powered-by');
 
   app.use(cookieParser());
 
   // Global prefix — /health is excluded so Docker healthchecks hit it directly
   app.setGlobalPrefix('api', { exclude: ['health'] });
 
-  // Swagger Configuration
-  const config = new DocumentBuilder()
-    .setTitle('Serve-OS API')
-    .setDescription('Multi-tenant SaaS backend for restaurant management platform')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // Swagger Configuration — not exposed in production (the full API map is public otherwise)
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('Serve-OS API')
+      .setDescription('Multi-tenant SaaS backend for restaurant management platform')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   // Global validation pipe
   app.useGlobalPipes(

@@ -16,16 +16,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4   # version comes from "packageManager" in package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Lint
-        run: npm run lint:check
+        run: pnpm lint:check
       - name: Unit tests
-        run: npm test
+        run: pnpm test
 
   # ──────────────────────────────────────────────
   # Build image → push to GHCR → SSH deploy
@@ -118,7 +119,7 @@ jobs:
             # Pull the new app image
             docker compose -f docker-compose.prod.yml --env-file .env pull app
 
-            # Run pending TypeORM migrations.
+            # Run pending TypeORM migrations (npm ships with the node image and only runs the script).
             # docker compose run (without --no-deps) starts the db service and
             # waits for it to pass its healthcheck before executing migrations.
             docker compose -f docker-compose.prod.yml --env-file .env run --rm app npm run migration:prod:run

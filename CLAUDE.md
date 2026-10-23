@@ -6,34 +6,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Development
-npm run start:dev          # watch mode, hot reload
-npm run build              # compile to dist/
+pnpm start:dev             # watch mode, hot reload
+pnpm build                 # compile to dist/
 
 # Testing
-npm test                   # run all unit tests
-npm run test:watch         # watch mode
-npm run test:e2e           # end-to-end tests
-npm run test:cov           # coverage report
+pnpm test                  # run all unit tests
+pnpm test:watch            # watch mode
+pnpm test:e2e              # end-to-end tests
+pnpm test:cov              # coverage report
 # Run a single test file:
-npx jest src/path/to/file.spec.ts
+pnpm exec jest src/path/to/file.spec.ts
 
 # Code quality
-npm run lint               # lint + auto-fix
-npm run lint:check         # lint without fix
-npm run format             # prettier write
-npm run format:check       # prettier check only
+pnpm lint                  # lint + auto-fix
+pnpm lint:check            # lint without fix
+pnpm format                # prettier write
+pnpm format:check          # prettier check only
 
 # Docker (preferred for dev — includes Postgres)
-npm run docker:dev         # build and start all services
-npm run docker:dev:stop    # stop without removing containers
-npm run docker:dev:logs    # tail logs
-npm run docker:dev:reset   # full wipe and restart (destroys DB data)
+pnpm docker:dev            # build and start all services
+pnpm docker:dev:stop       # stop without removing containers
+pnpm docker:dev:logs       # tail logs
+pnpm docker:dev:reset      # full wipe and restart (destroys DB data)
 
 # Database migrations
-npm run migration:generate -- --name=<migration-name>   # generate from entity diff
-npm run migration:dev:run      # apply pending migrations (dev)
-npm run migration:dev:revert   # revert last migration (dev)
-npm run migration:dev:status   # show migration status
+pnpm migration:generate <Name>  # generate from entity diff
+pnpm migration:dev:run          # apply pending migrations (dev)
+pnpm migration:dev:revert       # revert last migration (dev)
+pnpm migration:dev:status       # show migration status
 ```
 
 `synchronize` is always `false`. Schema changes must go through TypeORM migration files in `src/database/migrations/`.
@@ -128,4 +128,4 @@ Key modules:
 
 ### Swagger
 
-API docs are served at `/api/docs` in all environments.
+API docs are served at `/api/docs` in every environment except production (`NODE_ENV=production` disables them).

@@ -899,7 +899,7 @@ export class OrdersService {
     // When an order is served (DINE_IN), open a payment record for the cashier queue.
     if (next === OrderStatus.DELIVERED) {
       void this.openPaymentForCashier(updatedOrder).catch((err) =>
-        console.error('Failed to open cashier payment', err),
+        this.logger.error(`Failed to open cashier payment for order ${updatedOrder.id}: ${err}`),
       );
     }
 
@@ -922,9 +922,8 @@ export class OrdersService {
 
         await this.dataSource.query(sql, [order.id, order.businessId]);
       } catch (err) {
-        // Don't block order transition if the counter update fails; log if logging is available
-
-        console.error('Failed to bump product totalOrderCount', err);
+        // Don't block order transition if the counter update fails.
+        this.logger.error(`Failed to bump product totalOrderCount for order ${order.id}: ${err}`);
       }
     }
 
