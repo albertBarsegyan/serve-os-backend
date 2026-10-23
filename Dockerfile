@@ -1,49 +1,58 @@
-# 1. Build stage (used for both dev and prod)
-FROM node:24-alpine AS builder
+# 0. Base with pnpm (pinned — keep in sync with "packageManager" in package.json)
+FROM node:24-alpine AS base
 
 WORKDIR /app
 
+ENV HUSKY=0
+RUN npm install -g pnpm@11.25.0
+
+# 1. Build stage (used for both dev and prod)
+FROM base AS builder
+
 # Copy package files and install dependencies
-COPY package-lock.json package.json ./
-RUN npm ci
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # Copy source and build
 COPY . .
-RUN npm run build
+RUN pnpm build
 
 # 2. Development stage (for hot reload)
-FROM node:24-alpine AS development
-
-WORKDIR /app
+FROM base AS development
 
 # Copy package files and install all dependencies (including dev)
-COPY package-lock.json package.json ./
-RUN npm ci
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # Copy source code (will be overridden by volume mount in docker-compose)
 COPY . .
 
 EXPOSE 4000
 
-CMD ["npm", "run", "start:dev"]
+CMD ["pnpm", "start:dev"]
 
-# 3. Production stage
+# 3. Production dependencies only (no install scripts — bcrypt/sharp ship prebuilt binaries)
+FROM base AS prod-deps
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --prod --ignore-scripts
+
+# 4. Production stage (no pnpm in the runtime image)
 FROM node:24-alpine AS production
 
 WORKDIR /app
 
-# Copy production dependencies and build from builder
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/package-lock.json ./
-COPY --from=builder /app/dist ./dist
-
-# Install only production dependencies
-RUN npm ci --omit=dev --ignore-scripts
+# npm is only used to run package scripts (e.g. migration:prod:run); skip its update check
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001 && \
-    chown -R nodejs:nodejs /app
+    adduser -S nodejs -u 1001
+
+# Copy production dependencies and build output, owned by the runtime user
+COPY --chown=nodejs:nodejs --from=builder /app/package.json ./
+COPY --chown=nodejs:nodejs --from=prod-deps /app/node_modules ./node_modules
+COPY --chown=nodejs:nodejs --from=builder /app/dist ./dist
 
 USER nodejs
 
