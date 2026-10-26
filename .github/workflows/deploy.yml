@@ -104,29 +104,32 @@ jobs:
           sudo chmod 600 /etc/wireguard/wg0.conf
           sudo wg-quick up wg0
 
+      - name: Set up SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
       - name: Copy files to server
-        uses: appleboy/scp-action@v1
-        with:
-          host: 10.8.0.1
-          port: 22
-          username: deploy
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          fingerprint: ${{ secrets.SSH_HOST_FINGERPRINT }}
-          source: "docker-compose.prod.yml,.env"
-          target: /opt/serve-os-backend/
+        run: |
+          scp -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            docker-compose.prod.yml .env \
+            deploy@10.8.0.1:/opt/serve-os-backend/
 
       - name: Deploy on server
-        uses: appleboy/ssh-action@v1
-        with:
-          host: 10.8.0.1
-          port: 22
-          username: deploy
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          fingerprint: ${{ secrets.SSH_HOST_FINGERPRINT }}
-          # GHCR_TOKEN is forwarded as an env var to the remote script so it
-          # never appears in plain text in the workflow logs.
-          envs: GHCR_TOKEN
-          script: |
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          {
+            printf 'export GHCR_TOKEN=%q\n' "$GHCR_TOKEN"
+            cat <<'REMOTE_SCRIPT'
             set -e
             echo "$GHCR_TOKEN" | docker login ghcr.io -u albertbarsegyan --password-stdin
             cd /opt/serve-os-backend
@@ -144,8 +147,11 @@ jobs:
             docker compose -f docker-compose.prod.yml --env-file .env up -d
 
             docker image prune -f
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          REMOTE_SCRIPT
+          } | ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            deploy@10.8.0.1 'bash -s'
 
       - name: Disconnect tunnel
         if: always()
